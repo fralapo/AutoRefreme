@@ -51,10 +51,15 @@ def process_video(
     output_path: str,
     ratio: str,
     mode: str = "tracking",
-    blur_size: int = 21,
-    overlay_opacity: float = 1.0,
+    enable_padding: bool = False,
+    blur_amount: int = 21,
+    content_opacity: float = 1.0,
 ) -> None:
-    aspect_ratio = eval(ratio) if ":" in ratio else float(ratio)
+    if ":" in ratio:
+        w_str, h_str = ratio.split(':')
+        aspect_ratio = float(w_str) / float(h_str)
+    else:
+        aspect_ratio = float(ratio)
     detector = Detector()
     cap = cv2.VideoCapture(input_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -131,13 +136,72 @@ def process_video(
             crop_box = smooth_box(prev_box, box_arr)
             prev_box = crop_box
 
-        x1, y1, cw, ch = crop_box
-        cropped = frame[y1:y1+ch, x1:x1+cw]
-        resized = cv2.resize(cropped, (out_w, out_h), interpolation=cv2.INTER_AREA)
-        if overlay_opacity < 1.0:
-            background = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h)), (0, 0), blur_size)
-            resized = cv2.addWeighted(resized, overlay_opacity, background, 1 - overlay_opacity, 0)
-        out.write(resized)
+        x1_crop, y1_crop, cw_crop, ch_crop = crop_box # Rinomino per chiarezza
+        cropped_content = frame[y1_crop:y1_crop+ch_crop, x1_crop:x1_crop+cw_crop]
+
+        final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+
+        if enable_padding:
+            blurred_background = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA), (0,0), blur_amount)
+
+            content_h, content_w = cropped_content.shape[:2]
+            if content_h == 0 or content_w == 0:
+                # Se il crop è vuoto, il contenuto ridimensionato riempirà l'output come nero (o sfondo sfocato se opacità < 1)
+                resized_content_for_padding = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+                final_content_w, final_content_h = out_w, out_h
+            else:
+                scale_h = out_h / content_h
+                scale_w = out_w / content_w
+                scale = min(scale_h, scale_w)
+                final_content_w = int(content_w * scale)
+                final_content_h = int(content_h * scale)
+                resized_content_for_padding = cv2.resize(cropped_content, (final_content_w, final_content_h), interpolation=cv2.INTER_AREA)
+
+            pad_x = (out_w - final_content_w) // 2
+            pad_y = (out_h - final_content_h) // 2
+
+            final_frame_output = blurred_background.copy()
+
+            # Prepara la porzione di sfondo su cui il contenuto verrà sovrapposto
+            # Assicurati che le fette non siano negative o fuori dai limiti se final_content_w/h sono più grandi di out_w/h (non dovrebbe succedere con min(scale))
+            bg_slice_y_start = max(0, pad_y)
+            bg_slice_y_end = min(out_h, pad_y + final_content_h)
+            bg_slice_x_start = max(0, pad_x)
+            bg_slice_x_end = min(out_w, pad_x + final_content_w)
+
+            content_slice_h = bg_slice_y_end - bg_slice_y_start
+            content_slice_w = bg_slice_x_end - bg_slice_x_start
+
+            if content_slice_h > 0 and content_slice_w > 0: # Solo se l'area di sovrapposizione è valida
+                # Estrai la porzione di sfondo corrispondente al contenuto ridimensionato
+                center_of_background = blurred_background[bg_slice_y_start:bg_slice_y_end, bg_slice_x_start:bg_slice_x_end]
+
+                # Adatta resized_content_for_padding se le dimensioni della fetta sono diverse (ad es. a causa di arrotondamenti/limiti)
+                actual_content_to_blend = cv2.resize(resized_content_for_padding, (content_slice_w, content_slice_h), interpolation=cv2.INTER_AREA)
+
+                if content_opacity < 1.0:
+                    if center_of_background.shape[:2] == actual_content_to_blend.shape[:2]:
+                        blended_content = cv2.addWeighted(actual_content_to_blend, content_opacity, center_of_background, 1 - content_opacity, 0)
+                        final_frame_output[bg_slice_y_start:bg_slice_y_end, bg_slice_x_start:bg_slice_x_end] = blended_content
+                    else: # Fallback se le dimensioni non corrispondono (non dovrebbe accadere con la logica sopra)
+                        final_frame_output[bg_slice_y_start:bg_slice_y_end, bg_slice_x_start:bg_slice_x_end] = actual_content_to_blend
+                else:
+                    final_frame_output[bg_slice_y_start:bg_slice_y_end, bg_slice_x_start:bg_slice_x_end] = actual_content_to_blend
+            # Se content_slice_h/w è 0, final_frame_output rimane lo sfondo sfocato (corretto)
+
+        else: # Comportamento senza padding esplicito (vecchia logica adattata)
+            if cropped_content.shape[0] == 0 or cropped_content.shape[1] == 0:
+                 direct_resized_content = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+            else:
+                direct_resized_content = cv2.resize(cropped_content, (out_w, out_h), interpolation=cv2.INTER_AREA)
+
+            if content_opacity < 1.0:
+                full_frame_blur_bg = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA), (0,0), blur_amount)
+                final_frame_output = cv2.addWeighted(direct_resized_content, content_opacity, full_frame_blur_bg, 1 - content_opacity, 0)
+            else:
+                final_frame_output = direct_resized_content
+
+        out.write(final_frame_output)
 
         frame_idx += 1
         pbar.update(1)
@@ -153,8 +217,9 @@ def main() -> None:
     parser.add_argument("--ratio", default="9/16", help="Target aspect ratio (e.g., 9/16)")
     parser.add_argument("--mode", choices=["tracking", "stationary", "panning"], default="tracking",
                         help="Cropping strategy")
-    parser.add_argument("--blur", type=int, default=21, help="Blur kernel size for padding")
-    parser.add_argument("--overlay", type=float, default=1.0, help="Cropped overlay opacity")
+    parser.add_argument("--enable_padding", action="store_true", help="Enable letterbox/pillarbox padding with blurred background. Uses --blur_amount and --content_opacity.")
+    parser.add_argument("--blur_amount", type=int, default=21, help="Blur kernel size for padding background or full overlay background.")
+    parser.add_argument("--content_opacity", type=float, default=1.0, help="Opacity of the main content. If < 1.0, content is blended with the background (either bars or full frame blur).")
     parser.add_argument("--batch", action="store_true", help="Process all videos in input directory")
 
     args = parser.parse_args()
@@ -167,9 +232,9 @@ def main() -> None:
             if vid.suffix.lower() not in {".mp4", ".mov", ".mkv", ".avi"}:
                 continue
             out_path = out_dir / f"{vid.stem}_reframed.mp4"
-            process_video(str(vid), str(out_path), args.ratio, args.mode, args.blur, args.overlay)
+            process_video(str(vid), str(out_path), args.ratio, args.mode, args.enable_padding, args.blur_amount, args.content_opacity)
     else:
-        process_video(args.input, args.output, args.ratio, args.mode, args.blur, args.overlay)
+        process_video(args.input, args.output, args.ratio, args.mode, args.enable_padding, args.blur_amount, args.content_opacity)
 
 
 if __name__ == "__main__":
