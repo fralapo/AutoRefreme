@@ -120,7 +120,12 @@ def process_video(
     # historical_raw_boxes stores raw (un-smoothed) boxes from compute_crop for windowed smoothing
     historical_raw_boxes: deque = deque(maxlen=max(1, smoothing_window_size)) # maxlen must be > 0
 
-    pan_end = None # Specific to panning mode
+    # prev_box is used by stationary and panning modes to store scene-specific state
+    # For stationary, it's the fixed box for the scene.
+    # For panning, it's the starting box for the pan.
+    prev_box: Optional[np.ndarray] = None
+    pan_end: Optional[np.ndarray] = None # Specific to panning mode
+
     start = scene_bounds[0][0] # Start frame of the current scene
     current_scene_end = scene_bounds[0][1] # End frame of the current scene
     scene_iter = iter(scene_bounds)
