@@ -119,6 +119,12 @@ While FrameShift implements several core ideas, future enhancements could includ
 *   `--smoothing_window_size N`: (Default: `5`, integer) For `tracking` mode only.
     *   Sets the number of previous (un-smoothed) frames to consider in the moving average for smoothing camera motion.
     *   Larger values (e.g., 7-10) can lead to smoother motion but may introduce more lag or "inertia" in tracking fast-moving objects. Smaller values (e.g., 3) make tracking more responsive to recent detections.
+*   `--tracking_deadzone_center_px N`: (Default: `10`, integer) For `tracking` mode only.
+    *   The minimum change in pixels of the detected interest region's center compared to the previous smoothed frame's center that will trigger a camera movement.
+    *   Helps prevent jitter from very small fluctuations in detections when the subject is mostly stationary.
+*   `--tracking_deadzone_size_percent F`: (Default: `0.05`, float, 0.0-1.0) For `tracking` mode only.
+    *   The minimum relative change (as a percentage of the previous size) in the width or height of the detected interest region that will trigger a camera movement or zoom.
+    *   Example: `0.05` means a 5% change in width or height is needed. Helps prevent jittery zooming/resizing for minor detection fluctuations.
 *   `--batch`: If set, processes all supported video files in the `input` directory and saves them to the `output` directory.
 
 The underlying cropping logic always tries to maximize the visibility of the detected objects within the target aspect ratio (similar to a `MAXIMIZE_TARGET_DIMENSION` strategy), ensuring that the most important content is prioritized. The final region of interest is determined by a weighted calculation if `--object_weights` are used.

@@ -85,6 +85,8 @@ def process_video(
     tracking_responsiveness: float = 0.2,
     object_weights_map: Dict[str, float] = None, # Will be populated by parsed arg
     smoothing_window_size: int = 5,
+    tracking_deadzone_center_px: int = 10,
+    tracking_deadzone_size_percent: float = 0.05,
 ) -> None:
     if object_weights_map is None: # Default if not passed (e.g. direct call)
         object_weights_map = {'face': 1.0, 'person': 0.8, 'default': 0.5}
@@ -231,22 +233,46 @@ def process_video(
                 all_detections, object_weights_map, width, height
             )
 
-            # current_raw_crop_tuple è (x,y,w,h)
             current_raw_crop_tuple = compute_crop(interest_guide_box, width, height, aspect_ratio)
-            current_raw_crop_arr = np.array(current_raw_crop_tuple)
+            current_raw_crop_arr = np.array(current_raw_crop_tuple) # (x,y,w,h)
 
-            smoothed_box_arr = smooth_box_windowed(
-                historical_raw_boxes,
-                current_raw_crop_arr,
-                tracking_responsiveness,
-                prev_smoothed_crop_box
-            )
+            should_move = True
+            if prev_smoothed_crop_box is not None:
+                prev_x, prev_y, prev_w, prev_h = prev_smoothed_crop_box
+                prev_cx = prev_x + prev_w / 2.0
+                prev_cy = prev_y + prev_h / 2.0
 
-            historical_raw_boxes.append(current_raw_crop_arr) # Aggiungi il raw box allo storico per il prossimo frame
-            prev_smoothed_crop_box = smoothed_box_arr # Aggiorna il box smussato precedente
+                curr_x, curr_y, curr_w, curr_h = current_raw_crop_arr
+                curr_cx = curr_x + curr_w / 2.0
+                curr_cy = curr_y + curr_h / 2.0
 
-            crop_box = smoothed_box_arr # Il box da usare per il ritaglio
-        else: # Should not happen
+                center_diff = np.sqrt((curr_cx - prev_cx)**2 + (curr_cy - prev_cy)**2)
+
+                size_diff_w = abs(curr_w - prev_w) / max(1, float(prev_w)) if prev_w > 0 else (0 if curr_w == 0 else 1.0)
+                size_diff_h = abs(curr_h - prev_h) / max(1, float(prev_h)) if prev_h > 0 else (0 if curr_h == 0 else 1.0)
+
+                if (center_diff < tracking_deadzone_center_px and
+                    size_diff_w < tracking_deadzone_size_percent and
+                    size_diff_h < tracking_deadzone_size_percent):
+                    should_move = False
+
+            if should_move:
+                smoothed_box_arr = smooth_box_windowed(
+                    historical_raw_boxes,
+                    current_raw_crop_arr,
+                    tracking_responsiveness,
+                    prev_smoothed_crop_box
+                )
+                prev_smoothed_crop_box = smoothed_box_arr # Aggiorna il box smussato per il prossimo frame
+                crop_box = smoothed_box_arr
+            else: # Non muovere la camera
+                crop_box = prev_smoothed_crop_box # Usa l'ultimo box smussato
+                # prev_smoothed_crop_box rimane lo stesso, la camera non si è mossa
+
+            # Aggiorna sempre lo storico dei box grezzi
+            historical_raw_boxes.append(current_raw_crop_arr)
+
+        else: # Should not happen (se mode non è stationary, panning, o tracking)
             crop_box = np.array([0,0,width,height])
 
 
@@ -385,6 +411,8 @@ def main() -> None:
              "Assigns importance weights to detected object classes. 'default' is used for unspecified classes."
     )
     parser.add_argument("--smoothing_window_size", type=int, default=5, help="For 'tracking' mode: number of previous frames to consider for smoothing camera motion (e.g., 3-10). Default: 5.")
+    parser.add_argument("--tracking_deadzone_center_px", type=int, default=10, help="Tracking mode: min pixel change in detected interest center to trigger camera movement. Default: 10.")
+    parser.add_argument("--tracking_deadzone_size_percent", type=float, default=0.05, help="Tracking mode: min percentage change (0.0-1.0) in detected interest size to trigger camera movement/zoom. Default: 0.05 (5%).")
     parser.add_argument("--batch", action="store_true", help="Process all videos in input directory")
 
     args = parser.parse_args()
@@ -403,13 +431,17 @@ def main() -> None:
             process_video(str(vid), str(out_path), args.ratio, args.mode,
                           args.enable_padding, args.blur_amount, args.content_opacity,
                           args.tracking_responsiveness, object_weights_map=parsed_weights,
-                          smoothing_window_size=args.smoothing_window_size)
+                          smoothing_window_size=args.smoothing_window_size,
+                          tracking_deadzone_center_px=args.tracking_deadzone_center_px,
+                          tracking_deadzone_size_percent=args.tracking_deadzone_size_percent)
     else:
         parsed_weights = parse_object_weights(args.object_weights)
         process_video(args.input, args.output, args.ratio, args.mode,
                       args.enable_padding, args.blur_amount, args.content_opacity,
                       args.tracking_responsiveness, object_weights_map=parsed_weights,
-                      smoothing_window_size=args.smoothing_window_size)
+                      smoothing_window_size=args.smoothing_window_size,
+                      tracking_deadzone_center_px=args.tracking_deadzone_center_px,
+                      tracking_deadzone_size_percent=args.tracking_deadzone_size_percent)
 
 
 if __name__ == "__main__":
