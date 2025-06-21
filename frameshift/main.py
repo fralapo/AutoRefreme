@@ -350,36 +350,70 @@ def process_video(
             # Se content_slice_h/w è 0, final_frame_output rimane lo sfondo sfocato (corretto)
 
         else: # Modalità Fill/Pan & Scan: riempie il frame di output, tagliando se necessario.
+            final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8) # Inizia con un frame nero
+
             if cropped_content.shape[0] > 0 and cropped_content.shape[1] > 0:
                 content_h, content_w = cropped_content.shape[:2]
-
-                if content_h == 0 or content_w == 0:
-                    final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8) # Sfondo nero
-                else:
+                if content_h > 0 and content_w > 0: # Procedi solo se le dimensioni del contenuto sono valide
+                    # Scala per riempire (Pan & Scan)
                     scale_h_fill = out_h / content_h
                     scale_w_fill = out_w / content_w
                     scale_fill = max(scale_h_fill, scale_w_fill)
 
-                    scaled_fill_w = int(content_w * scale_fill)
-                    scaled_fill_h = int(content_h * scale_fill)
+                    scaled_content_fill_w = int(content_w * scale_fill)
+                    scaled_content_fill_h = int(content_h * scale_fill)
 
-                    content_to_be_cropped_further = cv2.resize(cropped_content, (scaled_fill_w, scaled_fill_h), interpolation=cv2.INTER_AREA)
+                    if scaled_content_fill_w > 0 and scaled_content_fill_h > 0:
+                        content_to_process = cv2.resize(cropped_content, (scaled_content_fill_w, scaled_content_fill_h), interpolation=cv2.INTER_AREA)
 
-                    crop_x_from_fill = max(0, (scaled_fill_w - out_w) // 2)
-                    crop_y_from_fill = max(0, (scaled_fill_h - out_h) // 2)
+                        # Calcola gli offset per centrare l'immagine scalata e determinare la regione da copiare
+                        src_x = (scaled_content_fill_w - out_w) // 2
+                        src_y = (scaled_content_fill_h - out_h) // 2
 
-                    final_content_portion = content_to_be_cropped_further[
-                        crop_y_from_fill : crop_y_from_fill + out_h,
-                        crop_x_from_fill : crop_x_from_fill + out_w
-                    ]
+                        dst_x = 0
+                        dst_y = 0
 
-                    if final_content_portion.shape[0] != out_h or final_content_portion.shape[1] != out_w:
-                        # Fallback resize if the slice wasn't exact (due to rounding or source smaller than target)
-                        # print(f"WARN: Pan&Scan final portion anomalous {final_content_portion.shape}, target {(out_h,out_w)}. Resizing.")
-                        final_content_portion = cv2.resize(final_content_portion, (out_w, out_h), interpolation=cv2.INTER_AREA)
-                    final_frame_output = final_content_portion
-            else:
-                final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8) # Sfondo nero
+                        copy_width = out_w
+                        copy_height = out_h
+
+                        # Se l'immagine scalata è più stretta dell'output (non dovrebbe succedere con max scale, ma per sicurezza)
+                        if scaled_content_fill_w < out_w:
+                            dst_x = (out_w - scaled_content_fill_w) // 2
+                            src_x = 0
+                            copy_width = scaled_content_fill_w
+
+                        # Se l'immagine scalata è meno alta dell'output
+                        if scaled_content_fill_h < out_h:
+                            dst_y = (out_h - scaled_content_fill_h) // 2
+                            src_y = 0
+                            copy_height = scaled_content_fill_h
+
+                        # Assicura che le coordinate sorgente siano valide e non negative
+                        src_x = max(0, src_x)
+                        src_y = max(0, src_y)
+
+                        # Assicura che le dimensioni da copiare non eccedano la sorgente disponibile
+                        actual_copy_w = min(copy_width, content_to_process.shape[1] - src_x)
+                        actual_copy_h = min(copy_height, content_to_process.shape[0] - src_y)
+
+                        # Assicura che le dimensioni da copiare non eccedano la destinazione disponibile
+                        actual_copy_w = min(actual_copy_w, out_w - dst_x)
+                        actual_copy_h = min(actual_copy_h, out_h - dst_y)
+
+
+                        if actual_copy_w > 0 and actual_copy_h > 0:
+                            src_slice = content_to_process[src_y : src_y + actual_copy_h, src_x : src_x + actual_copy_w]
+                            # Se lo slice sorgente non ha le dimensioni esatte di actual_copy_w/h (improbabile qui)
+                            # o se actual_copy_w/h non sono uguali a out_w/h (possibile se src_x/y erano <0)
+                            # potremmo aver bisogno di un resize finale per la porzione di destinazione.
+                            # Ma la logica di dst_x, dst_y, actual_copy_w/h dovrebbe definire una fetta valida per final_frame_output
+                            if src_slice.shape[0] == actual_copy_h and src_slice.shape[1] == actual_copy_w :
+                                final_frame_output[dst_y : dst_y + actual_copy_h, dst_x : dst_x + actual_copy_w] = src_slice
+                            # else:
+                                # print(f"WARN: Mismatch in Pan&Scan copy. Src_slice: {src_slice.shape}, Target area: ({actual_copy_h},{actual_copy_w})")
+                                # Potrebbe essere necessario un resize di src_slice a (actual_copy_w, actual_copy_h) prima di assegnare.
+                                # Per ora, ci si aspetta che le dimensioni corrispondano.
+            # Se cropped_content era vuoto o le sue dimensioni scalate non valide, final_frame_output rimane nero.
 
             if content_opacity < 1.0:
                 full_frame_blur_bg = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA), (0,0), blur_amount)
