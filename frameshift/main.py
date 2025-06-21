@@ -12,21 +12,39 @@ from .utils.detection import Detector
 from .utils.crop import union_boxes, smooth_box, compute_crop
 
 
-def sample_crop(video_path: str, start: int, end: int, detector: Detector,
+def sample_crop(video_path: str, start_frame_num: int, end_frame_num: int, detector: Detector,
                 frame_w: int, frame_h: int, aspect_ratio: float) -> Tuple[int, int, int, int]:
-    """Return crop box computed from a sample of frames between start and end."""
+    """Return crop box computed from a sample of frames between start_frame_num and end_frame_num."""
     cap = cv2.VideoCapture(video_path)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+    if not cap.isOpened():
+        # Fallback if video cannot be opened, return a default full-frame crop
+        return compute_crop((0,0,frame_w,frame_h), frame_w, frame_h, aspect_ratio)
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame_num)
     boxes: List[Tuple[int, int, int, int]] = []
-    for _ in range(start, min(end, start + 30)):
-        ret, frame = cap.read()
-        if not ret:
+
+    current_processed_frame_count = 0
+    # Limit the number of frames processed within sample_crop to avoid excessive processing for very long sample windows.
+    # This acts as an internal safety cap for sample_crop itself.
+    # The caller defines the window [start_frame_num, end_frame_num].
+    # This MAX_FRAMES_TO_SAMPLE_INTERNAL limits how many we actually process from that window.
+    MAX_FRAMES_TO_SAMPLE_INTERNAL = 150 # Example: process at most 150 frames from the given window
+
+    for i in range(start_frame_num, end_frame_num):
+        if current_processed_frame_count >= MAX_FRAMES_TO_SAMPLE_INTERNAL:
             break
+
+        ret, frame = cap.read()
+        if not ret: # Reached end of video or error
+            break
+
         faces, objs = detector.detect(frame)
         boxes.extend(faces + objs)
+        current_processed_frame_count += 1
+
     cap.release()
     union = union_boxes(boxes)
-    if union is None:
+    if union is None: # If no boxes were found in the sampled frames
         union = (0, 0, frame_w, frame_h)
     return compute_crop(union, frame_w, frame_h, aspect_ratio)
 
@@ -54,6 +72,7 @@ def process_video(
     enable_padding: bool = False,
     blur_amount: int = 21,
     content_opacity: float = 1.0,
+    tracking_responsiveness: float = 0.2,
 ) -> None:
     if ":" in ratio:
         w_str, h_str = ratio.split(':')
@@ -130,16 +149,40 @@ def process_video(
         if mode == "stationary":
             crop_box = prev_box
         elif mode == "panning":
-            if prev_box is None:
-                start_crop = sample_crop(input_path, frame_idx, current_scene_end,
+            if prev_box is None: # All'inizio di una nuova scena
+                scene_duration = current_scene_end - start
+                sample_window_len = min(max(30, scene_duration // 4), 150) # min 30, 25% scena, max 150
+
+                start_crop_sample_start_ts = start
+                start_crop_sample_end_ts = min(current_scene_end, start + sample_window_len)
+
+                end_crop_sample_start_ts = max(start, current_scene_end - sample_window_len)
+                end_crop_sample_end_ts = current_scene_end
+
+                if scene_duration < 2 * sample_window_len and scene_duration > 0 : # Scena corta, evita sovrapposizione eccessiva
+                    mid_point = start + scene_duration // 2
+                    start_crop_sample_end_ts = mid_point
+                    end_crop_sample_start_ts = mid_point
+
+                # Assicura che le finestre di campionamento siano valide (start < end)
+                if start_crop_sample_start_ts >= start_crop_sample_end_ts:
+                    start_crop_sample_end_ts = min(current_scene_end, start_crop_sample_start_ts + 1) if current_scene_end > start_crop_sample_start_ts else start_crop_sample_start_ts
+
+                if end_crop_sample_start_ts >= end_crop_sample_end_ts:
+                    end_crop_sample_start_ts = max(start, end_crop_sample_end_ts - 1) if start < end_crop_sample_end_ts else end_crop_sample_end_ts
+
+                # print(f"DEBUG Panning: Scene: {start}-{current_scene_end} (dur: {scene_duration}), frame_idx: {frame_idx}")
+                # print(f"DEBUG Panning: Start crop sample window: [{start_crop_sample_start_ts}, {start_crop_sample_end_ts})")
+                # print(f"DEBUG Panning: End crop sample window:   [{end_crop_sample_start_ts}, {end_crop_sample_end_ts})")
+
+                start_crop = sample_crop(input_path, start_crop_sample_start_ts, start_crop_sample_end_ts,
                                          detector, width, height, aspect_ratio)
-                end_crop = sample_crop(input_path,
-                                       max(frame_idx, current_scene_end - 30),
-                                       current_scene_end,
+                end_crop = sample_crop(input_path, end_crop_sample_start_ts, end_crop_sample_end_ts,
                                        detector, width, height, aspect_ratio)
                 prev_box = np.array(start_crop)
                 pan_end = np.array(end_crop)
-            alpha = (frame_idx - start) / max(1, current_scene_end - start)
+
+            alpha = (frame_idx - start) / max(1, current_scene_end - start) if current_scene_end > start else 0
             crop_box = (prev_box * (1 - alpha) + pan_end * alpha).astype(int)
         else:  # tracking
             faces, objects = detector.detect(frame)
@@ -147,9 +190,9 @@ def process_video(
             union = union_boxes(all_boxes)
             if union is None:
                 union = (0, 0, width, height)
-            crop_box = compute_crop(union, width, height, aspect_ratio)
-            box_arr = np.array(crop_box)
-            crop_box = smooth_box(prev_box, box_arr)
+            crop_box_temp = compute_crop(union, width, height, aspect_ratio) # Renamed to avoid confusion
+            box_arr = np.array(crop_box_temp)
+            crop_box = smooth_box(prev_box, box_arr, factor=tracking_responsiveness)
             prev_box = crop_box
 
         # Fallback se crop_box è None (non dovrebbe accadere con le correzioni precedenti, ma per sicurezza)
@@ -220,17 +263,44 @@ def process_video(
                     final_frame_output[bg_slice_y_start:bg_slice_y_end, bg_slice_x_start:bg_slice_x_end] = actual_content_to_blend
             # Se content_slice_h/w è 0, final_frame_output rimane lo sfondo sfocato (corretto)
 
-        else: # Comportamento senza padding esplicito (vecchia logica adattata)
-            if cropped_content.shape[0] == 0 or cropped_content.shape[1] == 0:
-                 direct_resized_content = np.zeros((out_h, out_w, 3), dtype=np.uint8)
-            else:
-                direct_resized_content = cv2.resize(cropped_content, (out_w, out_h), interpolation=cv2.INTER_AREA)
+        else: # Comportamento senza --enable_padding (ritaglio con barre nere se necessario, no deformazione)
+            final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8) # Sfondo nero
 
+            if cropped_content.shape[0] > 0 and cropped_content.shape[1] > 0:
+                content_h, content_w = cropped_content.shape[:2]
+
+                scale_h = out_h / content_h
+                scale_w = out_w / content_w
+                scale = min(scale_h, scale_w)
+
+                scaled_content_w = int(content_w * scale)
+                scaled_content_h = int(content_h * scale)
+
+                resized_content = cv2.resize(cropped_content, (scaled_content_w, scaled_content_h), interpolation=cv2.INTER_AREA)
+
+                pad_x = (out_w - scaled_content_w) // 2
+                pad_y = (out_h - scaled_content_h) // 2
+
+                slice_y_start = max(0, pad_y)
+                slice_y_end = min(out_h, pad_y + scaled_content_h)
+                slice_x_start = max(0, pad_x)
+                slice_x_end = min(out_w, pad_x + scaled_content_w)
+
+                # Adatta resized_content alle dimensioni effettive della fetta di destinazione
+                # Questo è importante se scaled_content_w/h è leggermente diverso da (slice_x_end - slice_x_start) a causa di arrotondamenti
+                actual_content_to_place_w = slice_x_end - slice_x_start
+                actual_content_to_place_h = slice_y_end - slice_y_start
+
+                if actual_content_to_place_w > 0 and actual_content_to_place_h > 0:
+                    actual_content_to_place = cv2.resize(resized_content, (actual_content_to_place_w, actual_content_to_place_h), interpolation=cv2.INTER_AREA)
+                    final_frame_output[slice_y_start:slice_y_end, slice_x_start:slice_x_end] = actual_content_to_place
+
+            # Applica l'opacità generale se content_opacity < 1.0
+            # Il final_frame_output (contenuto su barre nere, o solo barre nere se cropped_content era vuoto)
+            # viene mescolato con uno sfondo sfocato dell'intero frame originale.
             if content_opacity < 1.0:
                 full_frame_blur_bg = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA), (0,0), blur_amount)
-                final_frame_output = cv2.addWeighted(direct_resized_content, content_opacity, full_frame_blur_bg, 1 - content_opacity, 0)
-            else:
-                final_frame_output = direct_resized_content
+                final_frame_output = cv2.addWeighted(final_frame_output, content_opacity, full_frame_blur_bg, 1 - content_opacity, 0)
 
         out.write(final_frame_output)
 
@@ -251,6 +321,7 @@ def main() -> None:
     parser.add_argument("--enable_padding", action="store_true", help="Enable letterbox/pillarbox padding with blurred background. Uses --blur_amount and --content_opacity.")
     parser.add_argument("--blur_amount", type=int, default=21, help="Blur kernel size for padding background or full overlay background.")
     parser.add_argument("--content_opacity", type=float, default=1.0, help="Opacity of the main content. If < 1.0, content is blended with the background (either bars or full frame blur).")
+    parser.add_argument("--tracking_responsiveness", type=float, default=0.2, help="For 'tracking' mode: how responsive the crop is to the current detected box (0.0-1.0). Lower values mean more smoothing. Default: 0.2")
     parser.add_argument("--batch", action="store_true", help="Process all videos in input directory")
 
     args = parser.parse_args()
@@ -263,9 +334,9 @@ def main() -> None:
             if vid.suffix.lower() not in {".mp4", ".mov", ".mkv", ".avi"}:
                 continue
             out_path = out_dir / f"{vid.stem}_reframed.mp4"
-            process_video(str(vid), str(out_path), args.ratio, args.mode, args.enable_padding, args.blur_amount, args.content_opacity)
+            process_video(str(vid), str(out_path), args.ratio, args.mode, args.enable_padding, args.blur_amount, args.content_opacity, args.tracking_responsiveness)
     else:
-        process_video(args.input, args.output, args.ratio, args.mode, args.enable_padding, args.blur_amount, args.content_opacity)
+        process_video(args.input, args.output, args.ratio, args.mode, args.enable_padding, args.blur_amount, args.content_opacity, args.tracking_responsiveness)
 
 
 if __name__ == "__main__":
