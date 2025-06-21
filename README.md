@@ -110,9 +110,18 @@ While FrameShift implements several core ideas, future enhancements could includ
 *   `--tracking_responsiveness TR`: Float value (0.0-1.0, default: `0.2`). For `tracking` mode only. Controls how quickly the camera reacts to detected object movements.
     *   Lower values (e.g., `0.1`) result in more smoothing and slower camera response (more inertia).
     *   Higher values (e.g., `0.5`, `0.8`) result in less smoothing and a faster, more direct camera response.
+*   `--object_weights "label1:weight1,label2:weight2,default:weight_default"`: (Default: `"face:1.0,person:0.8,default:0.5"`)
+    *   Assigns importance weights to different object classes detected in the video (e.g., 'face', 'person', 'car'). These weights influence where the frame is centered.
+    *   Labels should be lowercase (e.g., 'car', 'dog'). Common labels from the YOLO model can be found by inspecting its class names, plus 'face' for faces.
+    *   Weights are float values (e.g., `1.0`, `0.75`). Higher weights mean more importance.
+    *   `default` weight is applied to any detected object class not explicitly listed.
+    *   Example: `"--object_weights \"face:1.0,person:0.9,dog:0.7,default:0.3\""`
+*   `--smoothing_window_size N`: (Default: `5`, integer) For `tracking` mode only.
+    *   Sets the number of previous (un-smoothed) frames to consider in the moving average for smoothing camera motion.
+    *   Larger values (e.g., 7-10) can lead to smoother motion but may introduce more lag or "inertia" in tracking fast-moving objects. Smaller values (e.g., 3) make tracking more responsive to recent detections.
 *   `--batch`: If set, processes all supported video files in the `input` directory and saves them to the `output` directory.
 
-The underlying cropping logic always tries to maximize the visibility of the detected objects within the target aspect ratio (similar to a `MAXIMIZE_TARGET_DIMENSION` strategy), ensuring that the most important content is prioritized.
+The underlying cropping logic always tries to maximize the visibility of the detected objects within the target aspect ratio (similar to a `MAXIMIZE_TARGET_DIMENSION` strategy), ensuring that the most important content is prioritized. The final region of interest is determined by a weighted calculation if `--object_weights` are used.
 
 ## License
 

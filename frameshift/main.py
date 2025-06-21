@@ -1,52 +1,62 @@
 """Command-line interface for FrameShift."""
 import argparse
 from pathlib import Path
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Any, Optional # Added Optional
 import cv2
 import numpy as np
 from tqdm import tqdm
+from collections import deque # Added deque
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
 
 from .utils.detection import Detector
-from .utils.crop import union_boxes, smooth_box, compute_crop
+# Renamed smooth_box to smooth_box_legacy, new one is smooth_box_windowed
+from .utils.crop import union_boxes, smooth_box_legacy, smooth_box_windowed, compute_crop, calculate_weighted_interest_region
+from .weights_parser import parse_object_weights
 
 
 def sample_crop(video_path: str, start_frame_num: int, end_frame_num: int, detector: Detector,
-                frame_w: int, frame_h: int, aspect_ratio: float) -> Tuple[int, int, int, int]:
+                frame_w: int, frame_h: int, aspect_ratio: float,
+                object_weights_map: Dict[str, float]) -> Tuple[int, int, int, int]: # Added object_weights_map
     """Return crop box computed from a sample of frames between start_frame_num and end_frame_num."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        # Fallback if video cannot be opened, return a default full-frame crop
         return compute_crop((0,0,frame_w,frame_h), frame_w, frame_h, aspect_ratio)
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame_num)
-    boxes: List[Tuple[int, int, int, int]] = []
+
+    # Accumulate all detections from the sample window
+    all_detections_in_sample: List[Dict[str, Any]] = []
 
     current_processed_frame_count = 0
-    # Limit the number of frames processed within sample_crop to avoid excessive processing for very long sample windows.
-    # This acts as an internal safety cap for sample_crop itself.
-    # The caller defines the window [start_frame_num, end_frame_num].
-    # This MAX_FRAMES_TO_SAMPLE_INTERNAL limits how many we actually process from that window.
-    MAX_FRAMES_TO_SAMPLE_INTERNAL = 150 # Example: process at most 150 frames from the given window
+    MAX_FRAMES_TO_SAMPLE_INTERNAL = 150
 
     for i in range(start_frame_num, end_frame_num):
         if current_processed_frame_count >= MAX_FRAMES_TO_SAMPLE_INTERNAL:
             break
 
         ret, frame = cap.read()
-        if not ret: # Reached end of video or error
+        if not ret:
             break
 
-        faces, objs = detector.detect(frame)
-        boxes.extend(faces + objs)
+        # detector.detect() now returns List[Dict[str, Any]]
+        faces_detected, objects_detected = detector.detect(frame)
+        # We need to associate these detections with the specific frame if we do temporal analysis later,
+        # but for now, just collect all detections in the window.
+        all_detections_in_sample.extend(faces_detected)
+        all_detections_in_sample.extend(objects_detected)
         current_processed_frame_count += 1
 
     cap.release()
-    union = union_boxes(boxes)
-    if union is None: # If no boxes were found in the sampled frames
-        union = (0, 0, frame_w, frame_h)
-    return compute_crop(union, frame_w, frame_h, aspect_ratio)
+
+    # Calculate a single interest region guide box based on *all* detections in the sample window
+    # This is a key change: instead of averaging boxes, we find a weighted interest region
+    # from the aggregate of detections over the sample period.
+    interest_guide_box = calculate_weighted_interest_region(
+        all_detections_in_sample, object_weights_map, frame_w, frame_h
+    )
+
+    return compute_crop(interest_guide_box, frame_w, frame_h, aspect_ratio)
 
 
 def detect_scenes(video_path: str) -> Dict[int, int]:
@@ -73,7 +83,12 @@ def process_video(
     blur_amount: int = 21,
     content_opacity: float = 1.0,
     tracking_responsiveness: float = 0.2,
+    object_weights_map: Dict[str, float] = None, # Will be populated by parsed arg
+    smoothing_window_size: int = 5,
 ) -> None:
+    if object_weights_map is None: # Default if not passed (e.g. direct call)
+        object_weights_map = {'face': 1.0, 'person': 0.8, 'default': 0.5}
+
     if ":" in ratio:
         w_str, h_str = ratio.split(':')
         aspect_ratio = float(w_str) / float(h_str)
@@ -98,10 +113,14 @@ def process_video(
     out = cv2.VideoWriter(output_path, fourcc, fps, (out_w, out_h))
 
     frame_idx = 0
-    prev_box = None
-    pan_end = None
-    start = scene_bounds[0][0]
-    current_scene_end = scene_bounds[0][1]
+    # prev_box is now prev_smoothed_crop_box, storing the output of the smoothing function
+    prev_smoothed_crop_box: Optional[np.ndarray] = None
+    # historical_raw_boxes stores raw (un-smoothed) boxes from compute_crop for windowed smoothing
+    historical_raw_boxes: deque = deque(maxlen=max(1, smoothing_window_size)) # maxlen must be > 0
+
+    pan_end = None # Specific to panning mode
+    start = scene_bounds[0][0] # Start frame of the current scene
+    current_scene_end = scene_bounds[0][1] # End frame of the current scene
     scene_iter = iter(scene_bounds)
     _ = next(scene_iter) # Consuma la prima scena dall'iteratore, 'start' e 'current_scene_end' si riferiscono alla prima scena
 
@@ -116,6 +135,7 @@ def process_video(
             width,
             height,
             aspect_ratio,
+            object_weights_map, # Passare i pesi
         )
         # sample_crop dovrebbe sempre restituire una tupla valida (x,y,w,h)
         prev_box = np.array(initial_crop_for_stationary)
@@ -131,27 +151,46 @@ def process_video(
                 start, current_scene_end = next(scene_iter)
             except StopIteration:
                 current_scene_end = float('inf')
+
+            # Reset per stati dipendenti dalla scena
+            pan_end = None # Per panning
+            # 'prev_box' è usato da stationary e panning (come start_box)
+            # Viene ricalcolato sotto se mode == stationary o se mode == panning e prev_box è None
             prev_box = None
-            pan_end = None
+
+            if mode == "tracking":
+                historical_raw_boxes.clear()
+                prev_smoothed_crop_box = None
+
             if mode == "stationary":
+                # Ricalcola il box fisso per la nuova scena usando 'start' (inizio della nuova scena)
                 prev_box = np.array(
                     sample_crop(
                         input_path,
-                        frame_idx,
+                        start,
                         current_scene_end,
                         detector,
                         width,
                         height,
                         aspect_ratio,
+                        object_weights_map,
                     )
                 )
 
+        # Determinazione del crop_box per il frame corrente
         if mode == "stationary":
-            crop_box = prev_box
+            # prev_box è stato calcolato all'inizio di process_video o al cambio di scena.
+            # Deve essere un np.ndarray valido qui.
+            if prev_box is None: # Fallback di sicurezza, non dovrebbe accadere
+                # print("ERROR: prev_box is None in stationary mode unexpectedly.")
+                crop_box = np.array([0,0,width,height]) # Fallback a full frame
+            else:
+                crop_box = prev_box
         elif mode == "panning":
-            if prev_box is None: # All'inizio di una nuova scena
+            # prev_box qui funge da pan_start_box.
+            if prev_box is None:
                 scene_duration = current_scene_end - start
-                sample_window_len = min(max(30, scene_duration // 4), 150) # min 30, 25% scena, max 150
+                sample_window_len = min(max(30, scene_duration // 4), 150)
 
                 start_crop_sample_start_ts = start
                 start_crop_sample_end_ts = min(current_scene_end, start + sample_window_len)
@@ -176,24 +215,40 @@ def process_video(
                 # print(f"DEBUG Panning: End crop sample window:   [{end_crop_sample_start_ts}, {end_crop_sample_end_ts})")
 
                 start_crop = sample_crop(input_path, start_crop_sample_start_ts, start_crop_sample_end_ts,
-                                         detector, width, height, aspect_ratio)
+                                         detector, width, height, aspect_ratio, object_weights_map) # Passare i pesi
                 end_crop = sample_crop(input_path, end_crop_sample_start_ts, end_crop_sample_end_ts,
-                                       detector, width, height, aspect_ratio)
+                                       detector, width, height, aspect_ratio, object_weights_map) # Passare i pesi
                 prev_box = np.array(start_crop)
                 pan_end = np.array(end_crop)
 
             alpha = (frame_idx - start) / max(1, current_scene_end - start) if current_scene_end > start else 0
             crop_box = (prev_box * (1 - alpha) + pan_end * alpha).astype(int)
-        else:  # tracking
-            faces, objects = detector.detect(frame)
-            all_boxes = faces + objects
-            union = union_boxes(all_boxes)
-            if union is None:
-                union = (0, 0, width, height)
-            crop_box_temp = compute_crop(union, width, height, aspect_ratio) # Renamed to avoid confusion
-            box_arr = np.array(crop_box_temp)
-            crop_box = smooth_box(prev_box, box_arr, factor=tracking_responsiveness)
-            prev_box = crop_box
+        elif mode == "tracking":
+            faces_detected, objects_detected = detector.detect(frame)
+            all_detections = faces_detected + objects_detected
+
+            interest_guide_box = calculate_weighted_interest_region(
+                all_detections, object_weights_map, width, height
+            )
+
+            # current_raw_crop_tuple è (x,y,w,h)
+            current_raw_crop_tuple = compute_crop(interest_guide_box, width, height, aspect_ratio)
+            current_raw_crop_arr = np.array(current_raw_crop_tuple)
+
+            smoothed_box_arr = smooth_box_windowed(
+                historical_raw_boxes,
+                current_raw_crop_arr,
+                tracking_responsiveness,
+                prev_smoothed_crop_box
+            )
+
+            historical_raw_boxes.append(current_raw_crop_arr) # Aggiungi il raw box allo storico per il prossimo frame
+            prev_smoothed_crop_box = smoothed_box_arr # Aggiorna il box smussato precedente
+
+            crop_box = smoothed_box_arr # Il box da usare per il ritaglio
+        else: # Should not happen
+            crop_box = np.array([0,0,width,height])
+
 
         # Fallback se crop_box è None (non dovrebbe accadere con le correzioni precedenti, ma per sicurezza)
         if crop_box is None:
@@ -322,6 +377,14 @@ def main() -> None:
     parser.add_argument("--blur_amount", type=int, default=21, help="Blur kernel size for padding background or full overlay background.")
     parser.add_argument("--content_opacity", type=float, default=1.0, help="Opacity of the main content. If < 1.0, content is blended with the background (either bars or full frame blur).")
     parser.add_argument("--tracking_responsiveness", type=float, default=0.2, help="For 'tracking' mode: how responsive the crop is to the current detected box (0.0-1.0). Lower values mean more smoothing. Default: 0.2")
+    parser.add_argument(
+        "--object_weights",
+        type=str,
+        default="face:1.0,person:0.8,default:0.5", # Default weights
+        help="Comma-separated string of 'label:weight' pairs (e.g., \"face:1.0,person:0.8,default:0.5\"). "
+             "Assigns importance weights to detected object classes. 'default' is used for unspecified classes."
+    )
+    parser.add_argument("--smoothing_window_size", type=int, default=5, help="For 'tracking' mode: number of previous frames to consider for smoothing camera motion (e.g., 3-10). Default: 5.")
     parser.add_argument("--batch", action="store_true", help="Process all videos in input directory")
 
     args = parser.parse_args()
@@ -330,13 +393,23 @@ def main() -> None:
         in_dir = Path(args.input)
         out_dir = Path(args.output)
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        parsed_weights = parse_object_weights(args.object_weights)
+
         for vid in in_dir.iterdir():
             if vid.suffix.lower() not in {".mp4", ".mov", ".mkv", ".avi"}:
                 continue
             out_path = out_dir / f"{vid.stem}_reframed.mp4"
-            process_video(str(vid), str(out_path), args.ratio, args.mode, args.enable_padding, args.blur_amount, args.content_opacity, args.tracking_responsiveness)
+            process_video(str(vid), str(out_path), args.ratio, args.mode,
+                          args.enable_padding, args.blur_amount, args.content_opacity,
+                          args.tracking_responsiveness, object_weights_map=parsed_weights,
+                          smoothing_window_size=args.smoothing_window_size)
     else:
-        process_video(args.input, args.output, args.ratio, args.mode, args.enable_padding, args.blur_amount, args.content_opacity, args.tracking_responsiveness)
+        parsed_weights = parse_object_weights(args.object_weights)
+        process_video(args.input, args.output, args.ratio, args.mode,
+                      args.enable_padding, args.blur_amount, args.content_opacity,
+                      args.tracking_responsiveness, object_weights_map=parsed_weights,
+                      smoothing_window_size=args.smoothing_window_size)
 
 
 if __name__ == "__main__":
