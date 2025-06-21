@@ -1,5 +1,5 @@
 """Functions for crop box computation and smoothing."""
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any # Added Dict, Any
 import numpy as np
 from collections import deque
 
