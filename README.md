@@ -80,9 +80,9 @@ FrameShift aims to intelligently reframe videos by understanding their content. 
 
 4.  **Cropping and Aspect Ratio Adherence (No-Deformation Policy):**
     FrameShift's primary goal is to reframe to the target aspect ratio **without deforming or stretching** the image.
-    *   The core cropping logic (`compute_crop`) identifies the region of interest (e.g., detected faces/objects) and then calculates the largest possible rectangle that includes this region while matching the target aspect ratio.
-    *   **Without Padding (`--enable_padding` is OFF):** If this intelligently cropped content (which already has the target aspect ratio) doesn't perfectly fill the final output dimensions (e.g., due to resolution differences), it's scaled while preserving its aspect ratio and centered. Any remaining space is filled with **black bars** (letterbox or pillarbox).
-    *   **With Blurred Padding (`--enable_padding` is ON):** If you prefer, enabling this option will fill the letterbox/pillarbox areas with a blurred version of the original video frame instead of black bars. The intensity of the blur is controlled by `--blur_amount`.
+    *   The core cropping logic (`compute_crop`) identifies the region of interest (e.g., detected faces/objects) and then calculates a crop window that includes this region while matching the target aspect ratio.
+    *   **Default Behavior (`--enable_padding` is OFF - Fill / Pan & Scan):** The intelligently cropped content (which has the target aspect ratio) is scaled to completely fill the output frame dimensions. If the scaled content is larger than the output frame in one dimension (e.g., a wide 16:9 crop being fitted into a tall 9:16 output), it will be centered and the excess will be trimmed off. This ensures no black bars and no image deformation, prioritizing a full frame of video.
+    *   **With Blurred Padding (`--enable_padding` is ON - Fit & Blur):** The intelligently cropped content is scaled to fit *within* the output frame dimensions while preserving its aspect ratio. If this results in empty areas (letterbox or pillarbox), these areas are filled with a blurred version of the original video frame. The intensity of the blur is controlled by `--blur_amount`. This mode ensures the entire cropped region of interest is visible.
 
 **Future Development Ideas (closer to full AutoFlip):**
 While FrameShift implements several core ideas, future enhancements could include:
@@ -119,12 +119,12 @@ While FrameShift implements several core ideas, future enhancements could includ
 *   `--smoothing_window_size N`: (Default: `5`, integer) For `tracking` mode only.
     *   Sets the number of previous (un-smoothed) frames to consider in the moving average for smoothing camera motion.
     *   Larger values (e.g., 7-10) can lead to smoother motion but may introduce more lag or "inertia" in tracking fast-moving objects. Smaller values (e.g., 3) make tracking more responsive to recent detections.
-*   `--tracking_deadzone_center_px N`: (Default: `10`, integer) For `tracking` mode only.
+*   `--tracking_deadzone_center_px N`: (Default: `20`, integer) For `tracking` mode only.
     *   The minimum change in pixels of the detected interest region's center compared to the previous smoothed frame's center that will trigger a camera movement.
     *   Helps prevent jitter from very small fluctuations in detections when the subject is mostly stationary.
-*   `--tracking_deadzone_size_percent F`: (Default: `0.05`, float, 0.0-1.0) For `tracking` mode only.
+*   `--tracking_deadzone_size_percent F`: (Default: `0.10`, float, 0.0-1.0) For `tracking` mode only.
     *   The minimum relative change (as a percentage of the previous size) in the width or height of the detected interest region that will trigger a camera movement or zoom.
-    *   Example: `0.05` means a 5% change in width or height is needed. Helps prevent jittery zooming/resizing for minor detection fluctuations.
+    *   Example: `0.10` means a 10% change in width or height is needed. Helps prevent jittery zooming/resizing for minor detection fluctuations.
 *   `--batch`: If set, processes all supported video files in the `input` directory and saves them to the `output` directory.
 
 The underlying cropping logic always tries to maximize the visibility of the detected objects within the target aspect ratio (similar to a `MAXIMIZE_TARGET_DIMENSION` strategy), ensuring that the most important content is prioritized. The final region of interest is determined by a weighted calculation if `--object_weights` are used.
