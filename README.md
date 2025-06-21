@@ -20,8 +20,16 @@ pip install -r requirements.txt
 ## Usage
 
 ```
-python -m frameshift.main input.mp4 output.mp4 --ratio 9:16
+python -m frameshift.main input.mp4 output.mp4 --ratio 9:16 --mode tracking
 ```
+
+To process an entire directory of videos, use batch mode:
+
+```
+python -m frameshift.main my_videos out_dir --ratio 9:16 --mode stationary --batch
+```
+
+Additional options include `--blur` and `--overlay` to control background padding.
 
 ## License
 
