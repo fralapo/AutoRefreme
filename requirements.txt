@@ -1,0 +1,6 @@
+opencv-python
+mediapipe
+scenedetect[opencv]
+ultralytics
+tqdm
+numpy
