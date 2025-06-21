@@ -84,7 +84,23 @@ def process_video(
     start = scene_bounds[0][0]
     current_scene_end = scene_bounds[0][1]
     scene_iter = iter(scene_bounds)
-    _ = next(scene_iter)
+    _ = next(scene_iter) # Consuma la prima scena dall'iteratore, 'start' e 'current_scene_end' si riferiscono alla prima scena
+
+    # Inizializzazione di prev_box per la prima scena se in modalità stazionaria
+    if mode == "stationary":
+        # print(f"DEBUG: Initializing prev_box for stationary mode for first scene ({start}-{current_scene_end})")
+        initial_crop_for_stationary = sample_crop(
+            input_path,
+            start,
+            current_scene_end,
+            detector,
+            width,
+            height,
+            aspect_ratio,
+        )
+        # sample_crop dovrebbe sempre restituire una tupla valida (x,y,w,h)
+        prev_box = np.array(initial_crop_for_stationary)
+        # print(f"DEBUG: Initial prev_box for stationary: {prev_box}")
 
     pbar = tqdm(total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), desc="Processing")
     while True:
@@ -136,7 +152,22 @@ def process_video(
             crop_box = smooth_box(prev_box, box_arr)
             prev_box = crop_box
 
-        x1_crop, y1_crop, cw_crop, ch_crop = crop_box # Rinomino per chiarezza
+        # Fallback se crop_box è None (non dovrebbe accadere con le correzioni precedenti, ma per sicurezza)
+        if crop_box is None:
+            # print(f"WARNING: crop_box is None at frame {frame_idx} before unpacking. Mode: {mode}. Defaulting.")
+            if prev_box is not None and isinstance(prev_box, np.ndarray) and prev_box.size == 4:
+                # Usa l'ultimo prev_box valido se è un ndarray (formato atteso x,y,w,h)
+                # print(f"DEBUG: Fallback to prev_box: {prev_box}")
+                x1_crop, y1_crop, cw_crop, ch_crop = prev_box.astype(int)
+            else:
+                # Fallback estremo all'intero frame
+                # print(f"DEBUG: Fallback to full frame crop (0,0,width,height).")
+                x1_crop, y1_crop, cw_crop, ch_crop = 0, 0, width, height
+        elif isinstance(crop_box, np.ndarray):
+            x1_crop, y1_crop, cw_crop, ch_crop = crop_box.astype(int)
+        else: # Dovrebbe essere una tupla o lista se non ndarray e non None
+            x1_crop, y1_crop, cw_crop, ch_crop = map(int, crop_box)
+
         cropped_content = frame[y1_crop:y1_crop+ch_crop, x1_crop:x1_crop+cw_crop]
 
         final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8)
