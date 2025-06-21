@@ -349,41 +349,38 @@ def process_video(
                     final_frame_output[bg_slice_y_start:bg_slice_y_end, bg_slice_x_start:bg_slice_x_end] = actual_content_to_blend
             # Se content_slice_h/w è 0, final_frame_output rimane lo sfondo sfocato (corretto)
 
-        else: # Comportamento senza --enable_padding (ritaglio con barre nere se necessario, no deformazione)
-            final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8) # Sfondo nero
-
+        else: # Modalità Fill/Pan & Scan: riempie il frame di output, tagliando se necessario.
             if cropped_content.shape[0] > 0 and cropped_content.shape[1] > 0:
                 content_h, content_w = cropped_content.shape[:2]
 
-                scale_h = out_h / content_h
-                scale_w = out_w / content_w
-                scale = min(scale_h, scale_w)
+                if content_h == 0 or content_w == 0:
+                    final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8) # Sfondo nero
+                else:
+                    scale_h_fill = out_h / content_h
+                    scale_w_fill = out_w / content_w
+                    scale_fill = max(scale_h_fill, scale_w_fill)
 
-                scaled_content_w = int(content_w * scale)
-                scaled_content_h = int(content_h * scale)
+                    scaled_fill_w = int(content_w * scale_fill)
+                    scaled_fill_h = int(content_h * scale_fill)
 
-                resized_content = cv2.resize(cropped_content, (scaled_content_w, scaled_content_h), interpolation=cv2.INTER_AREA)
+                    content_to_be_cropped_further = cv2.resize(cropped_content, (scaled_fill_w, scaled_fill_h), interpolation=cv2.INTER_AREA)
 
-                pad_x = (out_w - scaled_content_w) // 2
-                pad_y = (out_h - scaled_content_h) // 2
+                    crop_x_from_fill = max(0, (scaled_fill_w - out_w) // 2)
+                    crop_y_from_fill = max(0, (scaled_fill_h - out_h) // 2)
 
-                slice_y_start = max(0, pad_y)
-                slice_y_end = min(out_h, pad_y + scaled_content_h)
-                slice_x_start = max(0, pad_x)
-                slice_x_end = min(out_w, pad_x + scaled_content_w)
+                    final_content_portion = content_to_be_cropped_further[
+                        crop_y_from_fill : crop_y_from_fill + out_h,
+                        crop_x_from_fill : crop_x_from_fill + out_w
+                    ]
 
-                # Adatta resized_content alle dimensioni effettive della fetta di destinazione
-                # Questo è importante se scaled_content_w/h è leggermente diverso da (slice_x_end - slice_x_start) a causa di arrotondamenti
-                actual_content_to_place_w = slice_x_end - slice_x_start
-                actual_content_to_place_h = slice_y_end - slice_y_start
+                    if final_content_portion.shape[0] != out_h or final_content_portion.shape[1] != out_w:
+                        # Fallback resize if the slice wasn't exact (due to rounding or source smaller than target)
+                        # print(f"WARN: Pan&Scan final portion anomalous {final_content_portion.shape}, target {(out_h,out_w)}. Resizing.")
+                        final_content_portion = cv2.resize(final_content_portion, (out_w, out_h), interpolation=cv2.INTER_AREA)
+                    final_frame_output = final_content_portion
+            else:
+                final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8) # Sfondo nero
 
-                if actual_content_to_place_w > 0 and actual_content_to_place_h > 0:
-                    actual_content_to_place = cv2.resize(resized_content, (actual_content_to_place_w, actual_content_to_place_h), interpolation=cv2.INTER_AREA)
-                    final_frame_output[slice_y_start:slice_y_end, slice_x_start:slice_x_end] = actual_content_to_place
-
-            # Applica l'opacità generale se content_opacity < 1.0
-            # Il final_frame_output (contenuto su barre nere, o solo barre nere se cropped_content era vuoto)
-            # viene mescolato con uno sfondo sfocato dell'intero frame originale.
             if content_opacity < 1.0:
                 full_frame_blur_bg = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA), (0,0), blur_amount)
                 final_frame_output = cv2.addWeighted(final_frame_output, content_opacity, full_frame_blur_bg, 1 - content_opacity, 0)
@@ -416,8 +413,8 @@ def main() -> None:
              "Assigns importance weights to detected object classes. 'default' is used for unspecified classes."
     )
     parser.add_argument("--smoothing_window_size", type=int, default=5, help="For 'tracking' mode: number of previous frames to consider for smoothing camera motion (e.g., 3-10). Default: 5.")
-    parser.add_argument("--tracking_deadzone_center_px", type=int, default=10, help="Tracking mode: min pixel change in detected interest center to trigger camera movement. Default: 10.")
-    parser.add_argument("--tracking_deadzone_size_percent", type=float, default=0.05, help="Tracking mode: min percentage change (0.0-1.0) in detected interest size to trigger camera movement/zoom. Default: 0.05 (5%).")
+    parser.add_argument("--tracking_deadzone_center_px", type=int, default=20, help="Tracking mode: min pixel change in detected interest center to trigger camera movement. Default: 20.")
+    parser.add_argument("--tracking_deadzone_size_percent", type=float, default=0.10, help="Tracking mode: min percentage change (0.0-1.0) in detected interest size to trigger camera movement/zoom. Default: 0.10 (10%).")
     parser.add_argument("--batch", action="store_true", help="Process all videos in input directory")
 
     args = parser.parse_args()
