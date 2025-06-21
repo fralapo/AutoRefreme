@@ -1,6 +1,7 @@
 """Functions for crop box computation and smoothing."""
 from typing import List, Tuple, Optional
 import numpy as np
+from collections import deque
 
 
 def union_boxes(boxes: List[Tuple[int, int, int, int]]) -> Optional[Tuple[int, int, int, int]]:
