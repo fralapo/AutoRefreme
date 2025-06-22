@@ -13,6 +13,49 @@ from .utils.detection import Detector
 from .utils.crop import union_boxes, compute_crop, calculate_weighted_interest_region
 from .weights_parser import parse_object_weights
 
+# Helper Functions for Padding
+def map_blur_input_to_kernel(intensity: int) -> int:
+    """Maps an intensity value (0-10) to an odd kernel size for GaussianBlur."""
+    if not 0 <= intensity <= 10:
+        intensity = np.clip(intensity, 0, 10)
+
+    # Mappatura: 0->1, 1->5, 2->9, ..., 5->21, ..., 10->61
+    kernel_map = [1, 5, 9, 13, 17, 21, 27, 33, 41, 51, 61]
+    return kernel_map[intensity]
+
+def parse_color_to_bgr(color_input: str) -> Tuple[int, int, int]:
+    """
+    Parses a color string (name or "(R,G,B)") to a BGR tuple.
+    Defaults to black if parsing fails. BGR order for OpenCV.
+    """
+    color_input = color_input.strip().lower()
+    predefined_colors_bgr = {
+        "black": (0, 0, 0), "white": (255, 255, 255),
+        "red": (0, 0, 255), "green": (0, 255, 0), "blue": (255, 0, 0),
+        "yellow": (0, 255, 255), "cyan": (255, 255, 0), "magenta": (255, 0, 255),
+    }
+    if color_input in predefined_colors_bgr:
+        return predefined_colors_bgr[color_input]
+
+    if color_input.startswith("(") and color_input.endswith(")"):
+        try:
+            rgb_str = color_input[1:-1].split(',')
+            if len(rgb_str) == 3:
+                r = np.clip(int(rgb_str[0].strip()), 0, 255)
+                g = np.clip(int(rgb_str[1].strip()), 0, 255)
+                b = np.clip(int(rgb_str[2].strip()), 0, 255)
+                return (b, g, r) # Return as BGR
+            else:
+                print(f"Warning: Invalid RGB tuple format for color '{color_input}'. Expected 3 values (R,G,B).")
+        except ValueError:
+            print(f"Warning: Could not parse RGB numeric values for color '{color_input}'.")
+        except Exception as e:
+            print(f"Warning: Error parsing RGB color string '{color_input}': {e}")
+
+    if color_input != "black": # Avoid double warning if default 'black' fails (should not happen with predefined)
+        print(f"Warning: Color '{color_input}' not recognized or invalid format. Defaulting to black.")
+    return (0, 0, 0) # Default to black
+
 
 def sample_crop(video_path: str, start_frame_num: int, end_frame_num: int, detector: Detector,
                 frame_w: int, frame_h: int, aspect_ratio: float,
@@ -77,8 +120,10 @@ def process_video(
     input_path: str,
     output_path: str,
     ratio: str,
-    padding_style: str = "fill",
-    blur_amount: int = 21,
+    apply_padding_flag: bool,
+    padding_type_str: str,
+    padding_color_str: str,
+    blur_amount_param: int, # Interpreted based on context (0-10 for padding, kernel for opacity bg)
     content_opacity: float = 1.0,
     object_weights_map: Dict[str, float] = None,
 ) -> None:
@@ -170,6 +215,7 @@ def process_video(
     frame_idx = 0
     # prev_box è usato dalla modalità stationary per memorizzare il box fisso della scena.
     prev_box: Optional[np.ndarray] = None
+    # pan_end non è più necessario
 
     start = scene_bounds[0][0] # Start frame of the current scene
     current_scene_end = scene_bounds[0][1] # End frame of the current scene
@@ -217,81 +263,37 @@ def process_video(
             )
 
         # Determinazione del crop_box per il frame corrente (sempre stationary)
-        if prev_box is None: # Fallback di sicurezza, non dovrebbe accadere con la logica sopra
-            # print("ERROR: prev_box is None in stationary mode unexpectedly.")
-            crop_box = np.array([0,0,width,height]) # Fallback a full frame
+        # prev_box è stato calcolato all'inizio di process_video per la prima scena,
+        # e viene ricalcolato sopra al cambio di scena.
+        if prev_box is None:
+            # Questo blocco è un fallback di sicurezza estrema, non dovrebbe essere raggiunto.
+            # print("ERROR: prev_box is None in stationary mode unexpectedly at frame_idx:", frame_idx)
+            current_crop_box_tuple = (0,0,width,height)
         else:
-            crop_box = prev_box
+            current_crop_box_tuple = prev_box # prev_box è già un np.array(x,y,w,h) ma compute_crop resituisce tupla, quindi prev_box dovrebbe essere tupla
+                                          # o dobbiamo assicurarci che sia sempre array e fare .astype(int) dopo.
+                                          # sample_crop restituisce una tupla. Quindi prev_box (da np.array(sample_crop)) è un array.
+                                          # Il fallback di sicurezza per crop_box is None sotto gestirà la conversione.
 
+        # Assegnazione finale e unpacking di crop_box (che è current_crop_box_tuple o il fallback)
+        # La variabile 'crop_box' è usata per coerenza con il blocco di fallback sotto.
+        crop_box = current_crop_box_tuple
 
-        # Fallback se crop_box è None (non dovrebbe accadere con le correzioni precedenti, ma per sicurezza)
-        if crop_box is None:
-            # print(f"WARNING: crop_box is None at frame {frame_idx} before unpacking. Mode: {mode}. Defaulting.")
-            if prev_box is not None and isinstance(prev_box, np.ndarray) and prev_box.size == 4:
-                # Usa l'ultimo prev_box valido se è un ndarray (formato atteso x,y,w,h)
-                # print(f"DEBUG: Fallback to prev_box: {prev_box}")
-                x1_crop, y1_crop, cw_crop, ch_crop = prev_box.astype(int)
-            else:
-                # Fallback estremo all'intero frame
-                # print(f"DEBUG: Fallback to full frame crop (0,0,width,height).")
-                x1_crop, y1_crop, cw_crop, ch_crop = 0, 0, width, height
+        if crop_box is None: # Fallback se, nonostante tutto, crop_box fosse None
+            # print(f"WARNING: crop_box is None at frame {frame_idx} before unpacking. Defaulting.")
+            # Questo caso dovrebbe essere ancora più raro ora.
+            x1_crop, y1_crop, cw_crop, ch_crop = 0, 0, width, height
         elif isinstance(crop_box, np.ndarray):
             x1_crop, y1_crop, cw_crop, ch_crop = crop_box.astype(int)
-        else: # Dovrebbe essere una tupla o lista se non ndarray e non None
+        else: # Assumendo sia una tupla (x,y,w,h) da sample_crop o il fallback (0,0,w,h)
             x1_crop, y1_crop, cw_crop, ch_crop = map(int, crop_box)
 
         cropped_content = frame[y1_crop:y1_crop+ch_crop, x1_crop:x1_crop+cw_crop]
 
-        # final_frame_output sarà determinato dal padding_style
+        cropped_content = frame[y1_crop:y1_crop+ch_crop, x1_crop:x1_crop+cw_crop]
 
-        if padding_style == 'blur':
-            # Crea sfondo sfocato
-            background_for_blur = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA), (0,0), blur_amount)
-            final_frame_output = _apply_fit_padding(background_for_blur, cropped_content, out_w, out_h)
-
-        elif padding_style == 'black':
-            background_black = np.zeros((out_h, out_w, 3), dtype=np.uint8) # Sfondo nero
-            final_frame_output = _apply_fit_padding(background_black, cropped_content, out_w, out_h)
-
-        elif padding_style == 'fill': # Default: Fill / Pan & Scan
-            # Logica per FILL / PAN & SCAN
-            final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8) # Inizia nero, ma verrà riempito
-            if cropped_content.shape[0] > 0 and cropped_content.shape[1] > 0:
-                content_h, content_w = cropped_content.shape[:2]
-                if content_h > 0 and content_w > 0:
-                    scale_h_fill = out_h / content_h
-                    scale_w_fill = out_w / content_w
-                    scale_fill = max(scale_h_fill, scale_w_fill)
-
-                    scaled_content_fill_w = int(content_w * scale_fill)
-                    scaled_content_fill_h = int(content_h * scale_fill)
-
-                    if scaled_content_fill_w > 0 and scaled_content_fill_h > 0:
-                        content_to_process = cv2.resize(cropped_content, (scaled_content_fill_w, scaled_content_fill_h), interpolation=cv2.INTER_AREA)
-
-                        src_x = (scaled_content_fill_w - out_w) // 2
-                        src_y = (scaled_content_fill_h - out_h) // 2
-                        dst_x = 0; dst_y = 0
-                        copy_width = out_w; copy_height = out_h
-
-                        if scaled_content_fill_w < out_w:
-                            dst_x = (out_w - scaled_content_fill_w) // 2; src_x = 0; copy_width = scaled_content_fill_w
-                        if scaled_content_fill_h < out_h:
-                            dst_y = (out_h - scaled_content_fill_h) // 2; src_y = 0; copy_height = scaled_content_fill_h
-
-                        src_x = max(0, src_x); src_y = max(0, src_y)
-
-                        actual_copy_w = min(copy_width, content_to_process.shape[1] - src_x, out_w - dst_x)
-                        actual_copy_h = min(copy_height, content_to_process.shape[0] - src_y, out_h - dst_y)
-
-                        if actual_copy_w > 0 and actual_copy_h > 0:
-                            src_slice = content_to_process[src_y : src_y + actual_copy_h, src_x : src_x + actual_copy_w]
-                            if src_slice.shape[0] == actual_copy_h and src_slice.shape[1] == actual_copy_w:
-                                final_frame_output[dst_y : dst_y + actual_copy_h, dst_x : dst_x + actual_copy_w] = src_slice
-            # Se cropped_content era vuoto o le sue dimensioni scalate non valide, final_frame_output rimane nero.
-        else: # Stile di padding non riconosciuto, fallback a nero (o fill)
-            print(f"Warning: Unknown padding_style '{padding_style}'. Defaulting to 'fill'.")
-            # Copia-incolla della logica 'fill' per sicurezza come fallback
+        if not apply_padding_flag: # Corrisponde a padding_style='fill' se non specificato --padding
+            # Logica "Fill" / "Pan & Scan"
             final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8)
             if cropped_content.shape[0] > 0 and cropped_content.shape[1] > 0:
                 content_h, content_w = cropped_content.shape[:2]
@@ -312,13 +314,31 @@ def process_video(
                         if actual_copy_w > 0 and actual_copy_h > 0:
                             src_slice = content_to_process[src_y : src_y + actual_copy_h, src_x : src_x + actual_copy_w]
                             if src_slice.shape[0] == actual_copy_h and src_slice.shape[1] == actual_copy_w:
-                                final_frame_output[dst_y : dst_y + actual_copy_h, dst_x : dst_x + actual_copy_w] = src_slice
+                                 final_frame_output[dst_y : dst_y + actual_copy_h, dst_x : dst_x + actual_copy_w] = src_slice
+            # Se cropped_content è vuoto, final_frame_output rimane nero.
 
-        # Applica l'opacità generale se content_opacity < 1.0
-        # Questa logica si applica dopo che final_frame_output è stato costruito (con contenuto e padding/fill)
+        else: # apply_padding_flag is True, usa padding_type_str
+            base_frame_for_padding: Optional[np.ndarray] = None
+            if padding_type_str == 'blur':
+                kernel_size_for_padding_blur = map_blur_input_to_kernel(blur_amount_param) # blur_amount_param è l'input 0-10
+                base_frame_for_padding = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA), (kernel_size_for_padding_blur, kernel_size_for_padding_blur), 0)
+            elif padding_type_str == 'color':
+                color_bgr = parse_color_to_bgr(padding_color_str)
+                base_frame_for_padding = np.full((out_h, out_w, 3), color_bgr, dtype=np.uint8)
+            else: # Default padding type è 'black' (o se tipo non riconosciuto)
+                if padding_type_str != 'black':
+                     print(f"Warning: Unknown padding_type '{padding_type_str}' with --padding. Defaulting to 'black'.")
+                base_frame_for_padding = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+
+            final_frame_output = _apply_fit_padding(base_frame_for_padding, cropped_content, out_w, out_h)
+
+        # Applicazione Opacità (comune a tutti i casi)
         if content_opacity < 1.0:
-            # Lo sfondo per l'opacità è sempre il frame originale sfocato e ridimensionato a output
-            full_frame_blur_bg_for_opacity = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA), (0,0), blur_amount)
+            # Per lo sfondo dell'opacità, usiamo una sfocatura basata su blur_amount_param mappato a kernel
+            # Questo per coerenza, dato che blur_amount ora è 0-10.
+            opacity_bg_kernel_size = map_blur_input_to_kernel(blur_amount_param)
+            full_frame_blur_bg_for_opacity = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA),
+                                                              (opacity_bg_kernel_size, opacity_bg_kernel_size), 0)
             final_frame_output = cv2.addWeighted(final_frame_output, content_opacity, full_frame_blur_bg_for_opacity, 1 - content_opacity, 0)
 
         out.write(final_frame_output)
@@ -331,30 +351,33 @@ def process_video(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="FrameShift auto reframing tool. Default mode is 'stationary'.")
+    parser = argparse.ArgumentParser(description="FrameShift auto reframing tool (stationary mode only).")
     parser.add_argument("input", help="Input file or directory")
     parser.add_argument("output", help="Output file or directory")
     parser.add_argument("--ratio", default="9/16", help="Target aspect ratio (e.g., 9/16)")
+    # --mode and tracking-specific arguments are removed.
+    # --mode and tracking-specific arguments are removed.
+
+    # Arguments for padding configuration
+    parser.add_argument("--padding", action="store_true", default=False, help="Enable padding if content doesn't fill the frame. Default padding is black bars.")
     parser.add_argument(
-        "--padding_style",
+        "--padding_type",
         type=str,
-        default="fill",
-        choices=['fill', 'black', 'blur'],
-        help="Padding style. 'fill': Pan & Scan, content fills frame (default). "
-             "'black': Fit content, use black bars. "
-             "'blur': Fit content, use blurred background bars."
+        default="black",
+        choices=['black', 'blur', 'color'],
+        help="Type of padding to use if --padding is enabled. 'black': Solid black bars (default if --padding is set). 'blur': Blurred background bars. 'color': Solid color bars specified by --padding_color_value."
     )
-    parser.add_argument("--blur_amount", type=int, default=21, help="Blur kernel size for 'blur' padding_style.")
-    parser.add_argument("--content_opacity", type=float, default=1.0, help="Opacity of the main content. If < 1.0, content is blended with the background.")
-    # Nota: l'argomento --enable_padding è stato rimosso. Usare --padding_style.
+    parser.add_argument("--blur_amount", type=int, default=5, help="Blur intensity for padding (0-10, higher is more blur) if --padding_type='blur'. Default: 5.")
+    parser.add_argument("--padding_color_value", type=str, default="black", help="Color for padding if --padding_type='color'. Accepts names (e.g., 'white', 'blue') or RGB tuples as string (e.g., \"(255,0,0)\" for red).")
+
+    parser.add_argument("--content_opacity", type=float, default=1.0, help="Opacity of the main content. If < 1.0, content is blended with a full-frame blurred background (applied after padding).")
     parser.add_argument(
         "--object_weights",
         type=str,
-        default="face:1.0,person:0.8,default:0.5", # Default weights
-        help="Comma-separated string of 'label:weight' pairs (e.g., \"face:1.0,person:0.8,default:0.5\"). "
-             "Assigns importance weights to detected object classes for stationary mode. 'default' is used for unspecified classes."
+        default="face:1.0,person:0.8,default:0.5",
+        help="Comma-separated 'label:weight' pairs (e.g., \"face:1.0,person:0.8,default:0.5\"). "
+             "Assigns importance weights to detected objects. 'default' for unspecified classes."
     )
-    # Smoothing/deadzone arguments are removed as they were tracking specific
     parser.add_argument("--batch", action="store_true", help="Process all videos in input directory")
 
     args = parser.parse_args()
@@ -371,13 +394,21 @@ def main() -> None:
                 continue
             out_path = out_dir / f"{vid.stem}_reframed.mp4"
             process_video(str(vid), str(out_path), args.ratio,
-                          padding_style=args.padding_style, blur_amount=args.blur_amount,
-                          content_opacity=args.content_opacity, object_weights_map=parsed_weights)
+                          apply_padding_flag=args.padding,
+                          padding_type_str=args.padding_type,
+                          padding_color_str=args.padding_color_value,
+                          blur_amount_param=args.blur_amount,
+                          content_opacity=args.content_opacity,
+                          object_weights_map=parsed_weights)
     else:
         parsed_weights = parse_object_weights(args.object_weights)
         process_video(args.input, args.output, args.ratio,
-                      padding_style=args.padding_style, blur_amount=args.blur_amount,
-                      content_opacity=args.content_opacity, object_weights_map=parsed_weights)
+                      apply_padding_flag=args.padding,
+                      padding_type_str=args.padding_type,
+                      padding_color_str=args.padding_color_value,
+                      blur_amount_param=args.blur_amount,
+                      content_opacity=args.content_opacity,
+                      object_weights_map=parsed_weights)
 
 
 if __name__ == "__main__":
