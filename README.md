@@ -19,88 +19,79 @@ pip install -r requirements.txt
 
 ## Quick Start: Usage Examples
 
-FrameShift helps you automatically reframe videos to different aspect ratios. The reframing logic is based on a **stationary camera** approach per scene, meaning it finds an optimal fixed crop for each detected scene in your video.
+FrameShift automatically reframes videos, using a stationary (fixed) crop for each detected scene.
 
-**1. Convert a Landscape Video to Portrait (e.g., for Social Media Stories):**
-   This example takes `my_landscape_video.mp4` and converts it to a 9:16 portrait format. The content will be cropped to fill the new aspect ratio, centering on the most important detected objects (like faces).
-
+**1. Default Behavior: Fill Frame (Pan & Scan)**
+   Converts a landscape video to portrait, filling the new 9:16 frame by cropping and centering.
    ```bash
    python -m frameshift.main my_landscape_video.mp4 video_for_stories.mp4 --ratio 9:16
    ```
-   *(This uses the default `--padding_style="fill"`)*
 
-**2. Create a Square Video with Black Bar Padding:**
-   This command reframes `input_video.mp4` to a 1:1 square. If the content (after being cropped to 1:1 optimally) doesn't fill the entire square (e.g., if the optimal 1:1 crop is smaller than the output resolution), black bars will be added.
-
+**2. Padding with Black Bars:**
+   If you want to see the entire optimally cropped region without parts being cut off to fill the frame, use `--padding`. This will add black bars by default.
    ```bash
-   python -m frameshift.main input_video.mp4 square_video_black_bars.mp4 --ratio 1:1 --padding_style black
+   python -m frameshift.main input_video.mp4 square_video_fit.mp4 --ratio 1:1 --padding
    ```
 
-**3. Reframing with Blurred Padding (Letterbox/Pillarbox):**
-   To make sure the optimally cropped content is fully visible and any necessary bars are blurred versions of the video background:
-
+**3. Padding with Blurred Background:**
+   To use blurred background bars instead of black:
    ```bash
-   python -m frameshift.main input_video.mp4 output_with_blur_padding.mp4 --ratio 16:9 --padding_style blur --blur_amount 35
+   python -m frameshift.main input_video.mp4 output_blur_padded.mp4 --ratio 16:9 --padding --padding_type blur --blur_amount 5
+   ```
+   *(Adjust `--blur_amount` from 0 (minimal) to 10 (maximal) for desired blur intensity.)*
+
+**4. Padding with a Custom Color:**
+   To use solid green bars:
+   ```bash
+   python -m frameshift.main input_video.mp4 output_color_padded.mp4 --ratio 4:3 --padding --padding_type color --padding_color_value green
+   ```
+   Or with a specific RGB color (e.g., blue):
+   ```bash
+   python -m frameshift.main input_video.mp4 output_rgb_padded.mp4 --ratio 4:3 --padding --padding_type color --padding_color_value "(0,0,255)"
    ```
 
-**4. Batch Processing an Entire Directory:**
-   To reframe all videos in `my_video_folder` to a 4:5 aspect ratio with the default "fill" behavior and save them to `output_folder`:
-
+**5. Batch Processing:**
+   Reframes all videos in `my_video_folder` to 4:5, saving to `output_folder`, using default fill behavior.
    ```bash
    python -m frameshift.main my_video_folder/ output_folder/ --ratio 4:5 --batch
    ```
 
 ## How FrameShift Works (Inspired by Google AutoFlip)
 
-FrameShift aims to intelligently reframe videos by understanding their content. The current version focuses on a **stationary (fixed) crop per scene**, inspired by one of the modes in Google's AutoFlip.
+FrameShift intelligently reframes videos using a **stationary (fixed) crop per scene** approach:
 
-1.  **Scene Detection (Shot Boundary Detection):**
-    The video is first divided into individual scenes or "shots" using PySceneDetect's `ContentDetector`. Processing happens independently for each detected scene.
+1.  **Scene Detection:** Divides the video into scenes using PySceneDetect.
+2.  **Content Analysis:** Detects faces (MediaPipe) and objects (YOLOv8) within each scene, using `--object_weights` to determine their importance.
+3.  **Optimal Stationary Crop:** For each scene, calculates a fixed crop window that best frames the weighted area of interest at the target aspect ratio.
+4.  **Output Generation (Cropping/Padding):**
+    *   **Default (Fill/Pan & Scan):** If `--padding` is NOT specified, the determined crop is scaled to completely fill the output frame. Excess parts of the crop are trimmed to match the target aspect ratio without deforming the image. No bars are added.
+    *   **With Padding (`--padding` is specified):** The determined crop is scaled to fit entirely *within* the output frame, preserving its aspect ratio.
+        *   If `--padding_type` is `black` (default when `--padding` is used) or an unrecognized type: Black bars are added.
+        *   If `--padding_type` is `blur`: Blurred bars from the original video background are added. Intensity is controlled by `--blur_amount`.
+        *   If `--padding_type` is `color`: Bars of the color specified by `--padding_color_value` are added.
 
-2.  **Content Analysis (Face and Object Detection):**
-    Within each scene, FrameShift analyzes a sample of frames to identify important content:
-    *   **Faces:** Detected using MediaPipe.
-    *   **Common Objects:** Detected using a YOLOv8 model.
-    The importance of these elements can be influenced using the `--object_weights` argument.
-
-3.  **Optimal Stationary Crop per Scene:**
-    For each scene, an optimal fixed cropping window is determined. This window aims to best frame the weighted area of interest (derived from faces and objects) throughout that scene, matching the target aspect ratio. This is like choosing the best fixed camera position for that entire shot.
-
-4.  **Cropping, Resizing, and Padding (No-Deformation Policy):**
-    FrameShift's primary goal is to reframe to the target aspect ratio **without deforming or stretching** the image. The `--padding_style` argument controls how this is achieved:
-    *   **`fill` (Default):** The intelligently cropped content (which has the target aspect ratio) is scaled to completely fill the output frame dimensions. If the scaled content is larger than the output frame in one dimension (e.g., a wide 16:9 crop being fitted into a tall 9:16 output), it will be centered and the excess will be trimmed off (Pan & Scan). This ensures no bars and no image deformation, prioritizing a full frame of video.
-    *   **`black`:** The intelligently cropped content is scaled to fit *within* the output frame dimensions while preserving its aspect ratio. If this results in empty areas (letterbox or pillarbox), these areas are filled with **black bars**.
-    *   **`blur`:** Similar to `black`, but the empty areas are filled with a blurred version of the original video frame. The intensity of the blur is controlled by `--blur_amount`.
-
-**Future Development Ideas (closer to full AutoFlip):**
-While FrameShift currently focuses on a stationary crop per scene, future enhancements could include:
-*   More advanced smoothing techniques for camera motion (if dynamic modes like tracking/panning are reintroduced).
-*   Automatic selection of reframing strategies (`stationary`, `panning`, `tracking`) based on content analysis per scene.
-*   More sophisticated criteria for "required" objects and how they influence padding decisions.
+**Future Development Ideas:**
+Enhancements could include automatic selection of reframing strategies (like dynamic tracking or panning) and more advanced path smoothing.
 
 ## Command-line Options
 
 *   `input`: Path to the input video file or input directory (if `--batch` is used).
 *   `output`: Path to the output video file or output directory (if `--batch` is used).
-*   `--ratio R`: Target aspect ratio for the output video.
-    *   Formats: `W:H` (e.g., `9:16`, `1:1`) or as a float representing width/height (e.g., `0.5625` for 9:16, `1.0` for 1:1).
-    *   Default: `9/16`.
-*   `--padding_style STYLE`: Defines how to handle the content if it doesn't perfectly fill the target aspect ratio after the optimal stationary crop is determined.
-    *   `fill` (Default): Scales the cropped content to fill the output frame, potentially trimming edges (Pan & Scan). No bars are added.
-    *   `black`: Scales the cropped content to fit entirely within the output frame, adding black bars if necessary (letterbox/pillarbox).
-    *   `blur`: Scales the cropped content to fit entirely, adding blurred background bars if necessary.
-    *   Default: `fill`.
-*   `--blur_amount B`: Integer value (default: `21`). Kernel size for Gaussian blur when `padding_style` is `blur`. Also used for the full-frame background blur if `--content_opacity` is less than `1.0`.
-*   `--content_opacity O`: Float value between `0.0` (fully transparent) and `1.0` (fully opaque) (default: `1.0`). Controls the opacity of the main reframed video content against its background (relevant if padding creates bars or if overall opacity is reduced).
-*   `--object_weights "label1:weight1,label2:weight2,default:weight_default"`: (Default: `"face:1.0,person:0.8,default:0.5"`)
-    *   Assigns importance weights to different object classes (e.g., 'face', 'person', 'car') for determining the center of interest for the stationary crop.
-    *   Labels should be lowercase. Common labels from YOLO include 'person', 'car', 'dog', etc., plus 'face'.
-    *   Weights are float values. Higher weights mean more importance.
-    *   `default` weight applies to any detected object class not explicitly listed.
-    *   Example: `"--object_weights \"face:1.0,person:0.9,dog:0.7,default:0.3\""`
-*   `--batch`: If set, processes all supported video files in the `input` directory and saves them to the `output` directory.
+*   `--ratio R`: Target aspect ratio for the output video (e.g., `9:16`, `1:1`, or `0.5625`). Default: `9/16`.
+*   `--padding`: (Flag, default: `False`) If set, enables padding to ensure the entire optimally cropped content is visible. Defaults to black bars if no other padding type is specified. If not set, the content will be cropped to fill the output frame (Pan & Scan).
+*   `--padding_type TYPE`: (Default: `black`) Type of padding if `--padding` is enabled.
+    *   `black`: Solid black bars.
+    *   `blur`: Blurred background bars.
+    *   `color`: Solid color bars (use with `--padding_color_value`).
+*   `--blur_amount INT`: (Default: `5`) Integer from 0 (minimal) to 10 (maximal) for blur intensity when `padding_type` is `blur`.
+*   `--padding_color_value STR`: (Default: `black`) Color for padding if `padding_type` is `color`.
+    *   Accepts names: `black`, `white`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`.
+    *   Accepts RGB tuple as string: `"(R,G,B)"` (e.g., `"(255,0,0)"` for red).
+*   `--content_opacity O`: (Default: `1.0`) Opacity of the main video content (0.0-1.0). If < 1.0, the content (including any padding) is blended with a blurred version of the full original frame.
+*   `--object_weights "label:w,..."`: (Default: `"face:1.0,person:0.8,default:0.5"`) Comma-separated `label:weight` pairs for object importance (e.g., `face:1.0,person:0.8`).
+*   `--batch`: (Flag) Process all videos in the input directory.
 
-The underlying cropping logic (for the stationary per-scene approach) always tries to maximize the visibility of the detected objects within the target aspect ratio, ensuring that the most important content (based on `--object_weights`) is prioritized for that fixed shot.
+The cropping logic determines an optimal stationary (fixed) crop for each scene, prioritizing important content based on `--object_weights`. How this crop is presented in the final output (filled, or with padding) is controlled by `--padding` and its related arguments.
 
 ## License
 
