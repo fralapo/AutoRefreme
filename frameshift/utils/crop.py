@@ -1,7 +1,7 @@
 """Functions for crop box computation and smoothing."""
-from typing import List, Tuple, Optional, Dict, Any # Added Dict, Any
+from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
-from collections import deque
+# from collections import deque # No longer needed after removing smooth_box_windowed
 
 
 def union_boxes(boxes: List[Tuple[int, int, int, int]]) -> Optional[Tuple[int, int, int, int]]:
@@ -16,37 +16,8 @@ def smooth_box(prev_box: Optional[np.ndarray], curr_box: np.ndarray, factor: flo
         return curr_box
     return (prev_box * (1 - factor) + curr_box * factor).astype(int)
 
-# Renaming old smooth_box
-smooth_box_legacy = smooth_box
 
-def smooth_box_windowed(
-    historical_raw_boxes: deque, # Deque of np.ndarray [(x,y,w,h), ...], does NOT include current_raw_box
-    current_raw_box: np.ndarray, # np.ndarray [x,y,w,h] - current un-smoothed box from compute_crop
-    responsiveness: float,       # How much weight to give the current_raw_box (0.0 to 1.0)
-    prev_smoothed_box: Optional[np.ndarray] # Smoothed box from the previous frame
-) -> np.ndarray:
-    """
-    Smooths the current_raw_box based on a historical window of raw boxes and the previous smoothed box.
-    Boxes are in (x, y, width, height) format.
-    """
-    # If no history and no previous smoothed box (very first frame of tracking), return current raw box.
-    if not historical_raw_boxes and prev_smoothed_box is None:
-        return current_raw_box
-
-    # If history is empty but there's a prev_smoothed_box (e.g., first few frames of tracking),
-    # use legacy smoothing logic between prev_smoothed and current_raw.
-    if not historical_raw_boxes:
-        return (prev_smoothed_box * (1 - responsiveness) + current_raw_box * responsiveness).astype(int)
-
-    # Calculate the mean of the boxes in the historical window
-    # These are raw (un-smoothed) boxes from previous frames.
-    historical_mean_box = np.mean(list(historical_raw_boxes), axis=0)
-
-    # Interpolate between the historical mean and the current raw box
-    smoothed_box = (historical_mean_box * (1 - responsiveness) + current_raw_box * responsiveness).astype(int)
-
-    return smoothed_box
-
+# smooth_box_legacy and smooth_box_windowed removed as they were specific to tracking mode.
 
 def compute_crop(box: Tuple[int, int, int, int], frame_w: int, frame_h: int, aspect_ratio: float) -> Tuple[int, int, int, int]:
     x1, y1, x2, y2 = box
