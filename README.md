@@ -13,9 +13,15 @@ videos to a target aspect ratio while keeping faces and objects in view.
 
 ## Installation
 
-```
-pip install -r requirements.txt
-```
+1.  **Install Python Dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  **Install FFmpeg (for audio processing):**
+    FrameShift uses FFmpeg to process and include audio from the original video into the reframed output. If FFmpeg is not installed or not found in your system's PATH, the script will still process the video but the output will not contain audio (a warning will be displayed).
+    *   **Download FFmpeg:** You can download FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html).
+    *   **Installation:** Follow the installation instructions for your operating system. Ensure the directory containing the `ffmpeg` (or `ffmpeg.exe`) executable is added to your system's PATH environment variable.
+    *   **Verify Installation:** Open a new terminal/command prompt and type `ffmpeg -version`. If it's installed correctly, you should see version information.
 
 ## Quick Start: Usage Examples
 
@@ -69,6 +75,7 @@ FrameShift intelligently reframes videos using a **stationary (fixed) crop per s
         *   If `--padding_type` is `black` (default when `--padding` is used) or an unrecognized type: Black bars are added.
         *   If `--padding_type` is `blur`: Blurred bars from the original video background are added. Intensity is controlled by `--blur_amount`.
         *   If `--padding_type` is `color`: Bars of the color specified by `--padding_color_value` are added.
+    The script will attempt to preserve the audio track from the original video using FFmpeg. If FFmpeg is not found, the output video will be silent.
 
 **Future Development Ideas:**
 Enhancements could include automatic selection of reframing strategies (like dynamic tracking or panning) and more advanced path smoothing.
