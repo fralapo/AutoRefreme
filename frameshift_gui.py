@@ -231,6 +231,59 @@ class FrameShiftGUI:
         ToolTip(self.start_button, "Avvia il processo di reframing del video con le impostazioni correnti.")
         ToolTip(self.log_text, "Area di log: mostra messaggi sullo stato dell'elaborazione, avvisi ed errori.")
 
+    # Metodi per il menu Aiuto
+    def show_about_dialog(self):
+        messagebox.showinfo(
+            "Informazioni su FrameShift GUI",
+            "FrameShift GUI\n\n"
+            "Un'interfaccia grafica per lo strumento FrameShift.\n"
+            "FrameShift è ispirato a Google AutoFlip per il reframing automatico di video.\n\n"
+            "Questa GUI permette di utilizzare le funzionalità di FrameShift senza usare la riga di comando."
+        )
+
+    def show_quick_guide_placeholder(self):
+        messagebox.showinfo(
+            "Guida Rapida",
+            "Guida Rapida (Placeholder)\n\n"
+            "1. Seleziona il video di input (o una cartella se usi 'Processa in Batch').\n"
+            "2. Scegli dove salvare il video risultante.\n"
+            "3. Modifica le impostazioni come rapporto d'aspetto, padding, ecc., secondo necessità.\n"
+            "4. Controlla i tooltip (passando il mouse sopra le opzioni) per maggiori dettagli.\n"
+            "5. Clicca 'AVVIA PROCESSO'.\n"
+            "6. Monitora i messaggi nell'area di log in basso."
+        )
+
+    def _apply_tooltips(self):
+        # Tooltips per Input/Output
+        ToolTip(self.io_frame.winfo_children()[1], "Percorso del video di input o della cartella contenente i video (se 'Processa in Batch' è attivo).")
+        ToolTip(self.io_frame.winfo_children()[2], "Scegli il file video di input o la cartella.")
+        ToolTip(self.io_frame.winfo_children()[4], "Percorso del video di output o della cartella dove salvare i video processati.")
+        ToolTip(self.io_frame.winfo_children()[5], "Scegli dove salvare il video processato o la cartella di output.")
+        ToolTip(self.io_frame.winfo_children()[6], "Spunta per processare tutti i video in una cartella di input e salvarli in una cartella di output.")
+
+        # Tooltips per Impostazioni Principali
+        ratio_entry = self.main_settings_frame.winfo_children()[1]
+        ToolTip(ratio_entry, "Rapporto d'aspetto desiderato per il video finale. Esempi: '9:16' (verticale), '1:1' (quadrato), '16:9' (orizzontale), o un numero come '0.5625'.")
+        height_entry = self.main_settings_frame.winfo_children()[3]
+        ToolTip(height_entry, "Altezza del video di output in pixel (es. 1080, 720). La larghezza sarà calcolata automaticamente.")
+        interpolation_combo = self.main_settings_frame.winfo_children()[5]
+        ToolTip(interpolation_combo, "Algoritmo usato per ridimensionare i video. 'lanczos' o 'cubic' sono buoni per qualità, 'area' per rimpicciolire, 'linear' è più veloce.")
+
+        # Tooltips per Impostazioni Padding
+        ToolTip(self.padding_checkbox, "Se spuntato, aggiunge barre laterali se il video non riempie il nuovo formato, invece di tagliare i bordi.")
+        ToolTip(self.padding_type_combo, "Scegli il tipo di barre da aggiungere: 'black' (nere), 'blur' (sfocate dal video stesso), 'color' (colore solido).")
+        ToolTip(self.blur_slider, "Regola l'intensità della sfocatura per il padding 'blur'. 0 = minima, 10 = massima.")
+        ToolTip(self.color_entry, "Inserisci un nome di colore (es. 'red', 'blue') o un codice RGB es. '(255,0,0)' per il padding 'color'.")
+        ToolTip(self.color_button, "Scegli un colore di padding dalla palette.")
+
+        # Tooltips per Impostazioni Avanzate
+        ToolTip(self.object_weights_text, "Pesi per gli oggetti rilevati, formato 'etichetta:peso'. Es: 'face:1.0,person:0.8,default:0.2'. 'default' si applica a oggetti non specificati. Pesi più alti danno più importanza.")
+        ToolTip(self.opacity_slider, "Opacità del contenuto video principale. Se < 1.0, il video viene fuso con uno sfondo sfocato del frame originale. 1.0 = completamente opaco.")
+
+        # Tooltip per Bottone Azione
+        ToolTip(self.start_button, "Avvia il processo di reframing del video con le impostazioni correnti.")
+        ToolTip(self.log_text, "Area di log: mostra messaggi sullo stato dell'elaborazione, avvisi ed errori.")
+
 # Classe Helper per Tooltip (semplice implementazione)
 class ToolTip:
     def __init__(self, widget, text):
