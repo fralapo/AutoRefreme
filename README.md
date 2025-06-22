@@ -7,7 +7,7 @@ videos to a target aspect ratio while keeping faces and objects in view.
 
 - Shot detection using PySceneDetect
 - Face detection with MediaPipe
-- Object detection using YOLOv8 (Ultralytics)
+- Object detection using YOLO (Ultralytics)
 - Smooth camera path optimization to avoid jitter
 - Output encoded with OpenCV
 
