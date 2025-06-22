@@ -136,6 +136,10 @@ def sample_crop(video_path: str, start_frame_num: int, end_frame_num: int, detec
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame_num)
 
+    active_obj_labels = {
+        label for label, weight in object_weights_map.items()
+        if label != 'face' and weight > 0.0
+    }
     # Accumulate all detections from the sample window
     all_detections_in_sample: List[Dict[str, Any]] = []
 
@@ -150,10 +154,7 @@ def sample_crop(video_path: str, start_frame_num: int, end_frame_num: int, detec
         if not ret:
             break
 
-        # detector.detect() now returns List[Dict[str, Any]]
-        faces_detected, objects_detected = detector.detect(frame)
-        # We need to associate these detections with the specific frame if we do temporal analysis later,
-        # but for now, just collect all detections in the window.
+        faces_detected, objects_detected = detector.detect(frame, active_obj_labels)
         all_detections_in_sample.extend(faces_detected)
         all_detections_in_sample.extend(objects_detected)
         current_processed_frame_count += 1
@@ -200,6 +201,11 @@ def process_video(
 ) -> Optional[str]: # Restituisce il percorso del video temporaneo o None
     if object_weights_map is None:
         object_weights_map = {'face': 1.0, 'person': 0.8, 'default': 0.5}
+
+    active_obj_labels_for_yolo = {
+        label for label, weight in object_weights_map.items()
+        if label != 'face' and weight > 0.0
+    }
     # La modalità è implicitamente 'stationary'
 
     # Helper function for padding styles 'blur' and 'black'
@@ -331,6 +337,14 @@ def process_video(
         ret, frame = cap.read()
         if not ret:
             break
+
+        # Nota: la logica di determinazione del crop_box per la modalità stationary è basata
+        # su 'prev_box', che viene calcolato una volta per scena (all'inizio e ai cambi di scena)
+        # usando sample_crop. sample_crop ora usa active_obj_labels internamente.
+        # Se in futuro si volesse un crop_box calcolato frame-by-frame ANCHE per stationary,
+        # la chiamata a detector.detect e calculate_weighted_interest_region andrebbe fatta qui nel loop.
+        # Per ora, ci atteniamo al crop fisso per scena per 'stationary'.
+
         if frame_idx >= current_scene_end:
             try:
                 start, current_scene_end = next(scene_iter)
@@ -339,7 +353,7 @@ def process_video(
 
             # Ricalcola il box fisso per la nuova scena (modalità stationary implicita)
             prev_box = np.array(
-                sample_crop(
+                sample_crop( # sample_crop usa active_obj_labels_for_yolo internamente
                     input_path,
                     start,
                     current_scene_end,
@@ -352,37 +366,24 @@ def process_video(
             )
 
         # Determinazione del crop_box per il frame corrente (sempre stationary)
-        # prev_box è stato calcolato all'inizio di process_video per la prima scena,
-        # e viene ricalcolato sopra al cambio di scena.
         if prev_box is None:
-            # Questo blocco è un fallback di sicurezza estrema, non dovrebbe essere raggiunto.
-            # print("ERROR: prev_box is None in stationary mode unexpectedly at frame_idx:", frame_idx)
             current_crop_box_tuple = (0,0,width,height)
         else:
-            current_crop_box_tuple = prev_box # prev_box è già un np.array(x,y,w,h) ma compute_crop resituisce tupla, quindi prev_box dovrebbe essere tupla
-                                          # o dobbiamo assicurarci che sia sempre array e fare .astype(int) dopo.
-                                          # sample_crop restituisce una tupla. Quindi prev_box (da np.array(sample_crop)) è un array.
-                                          # Il fallback di sicurezza per crop_box is None sotto gestirà la conversione.
+            current_crop_box_tuple = prev_box
 
-        # Assegnazione finale e unpacking di crop_box (che è current_crop_box_tuple o il fallback)
-        # La variabile 'crop_box' è usata per coerenza con il blocco di fallback sotto.
         crop_box = current_crop_box_tuple
 
-        if crop_box is None: # Fallback se, nonostante tutto, crop_box fosse None
-            # print(f"WARNING: crop_box is None at frame {frame_idx} before unpacking. Defaulting.")
-            # Questo caso dovrebbe essere ancora più raro ora.
+        if crop_box is None:
             x1_crop, y1_crop, cw_crop, ch_crop = 0, 0, width, height
         elif isinstance(crop_box, np.ndarray):
             x1_crop, y1_crop, cw_crop, ch_crop = crop_box.astype(int)
-        else: # Assumendo sia una tupla (x,y,w,h) da sample_crop o il fallback (0,0,w,h)
+        else:
             x1_crop, y1_crop, cw_crop, ch_crop = map(int, crop_box)
 
         cropped_content = frame[y1_crop:y1_crop+ch_crop, x1_crop:x1_crop+cw_crop]
 
-        cropped_content = frame[y1_crop:y1_crop+ch_crop, x1_crop:x1_crop+cw_crop]
-
-        if not apply_padding_flag: # Corrisponde a padding_style='fill' se non specificato --padding
-            # Logica "Fill" / "Pan & Scan"
+        # La logica di padding/fill rimane la stessa, opera su cropped_content
+        if not apply_padding_flag:
             final_frame_output = np.zeros((out_h, out_w, 3), dtype=np.uint8)
             if cropped_content.shape[0] > 0 and cropped_content.shape[1] > 0:
                 content_h, content_w = cropped_content.shape[:2]

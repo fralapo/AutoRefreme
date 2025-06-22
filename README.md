@@ -14,9 +14,12 @@ videos to a target aspect ratio while keeping faces and objects in view.
 ## Installation
 
 1.  **Install Python Dependencies:**
+    The script requires Python 3.8+ and the packages listed in `requirements.txt`.
     ```bash
     pip install -r requirements.txt
     ```
+    This will install `opencv-python`, `mediapipe`, `scenedetect`, `ultralytics`, `huggingface_hub`, `tqdm`, and `numpy`.
+
 2.  **Install FFmpeg (for audio processing):**
     FrameShift uses FFmpeg to process and include audio from the original video into the reframed output. If FFmpeg is not installed or not found in your system's PATH, the script will still process the video but the output will not contain audio (a warning will be displayed).
     *   **Download FFmpeg:** You can download FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html).
@@ -67,7 +70,10 @@ FrameShift automatically reframes videos, using a stationary (fixed) crop for ea
 FrameShift intelligently reframes videos using a **stationary (fixed) crop per scene** approach:
 
 1.  **Scene Detection:** Divides the video into scenes using PySceneDetect.
-2.  **Content Analysis:** Detects faces (MediaPipe) and objects (YOLOv8) within each scene, using `--object_weights` to determine their importance.
+2.  **Content Analysis:**
+    *   **Faces:** Primarily detected using a specialized YOLOv8 model from Hugging Face (`arnabdhar/YOLOv8-Face-Detection`). MediaPipe is used as a fallback if the YOLO face model fails to load or during its initial download.
+    *   **Other Objects:** Detected using the general-purpose YOLOv8n model. This step is performed *only if* you specify weights for object classes other than 'face' in the `--object_weights` argument. This optimizes performance when only face-centric reframing is needed.
+    *   The importance of all detected elements in guiding the crop is determined by the `--object_weights` argument.
 3.  **Optimal Stationary Crop:** For each scene, calculates a fixed crop window that best frames the weighted area of interest at the target aspect ratio.
 4.  **Output Generation (Cropping/Padding):**
     *   **Default (Fill/Pan & Scan):** If `--padding` is NOT specified, the determined crop is scaled to completely fill the output frame. Excess parts of the crop are trimmed to match the target aspect ratio without deforming the image. No bars are added.
@@ -102,7 +108,10 @@ Enhancements could include automatic selection of reframing strategies (like dyn
     *   `linear` is faster but might be less sharp than `cubic` or `lanczos`.
     *   `nearest` is the fastest but produces blocky results, usually not recommended for video.
 *   `--content_opacity O`: (Default: `1.0`) Opacity of the main video content (0.0-1.0). If < 1.0, the content (including any padding) is blended with a blurred version of the full original frame.
-*   `--object_weights "label:w,..."`: (Default: `"face:1.0,person:0.8,default:0.5"`) Comma-separated `label:weight` pairs for object importance (e.g., `face:1.0,person:0.8`).
+*   `--object_weights "label:w,..."`: (Default: `"face:1.0,person:0.8,default:0.5"`) Comma-separated `label:weight` pairs.
+    *   Assigns importance weights to detected elements. The label `'face'` refers to faces detected by the specialized YOLOv8-Face model (or MediaPipe fallback). Other labels (e.g., `'person'`, `'car'`, `'dog'`) correspond to objects detected by YOLOv8n.
+    *   YOLOv8n object detection is only run if weights are specified for labels other than `'face'` and `'default'` with a weight > 0.
+    *   Example: `"--object_weights \"face:1.0,dog:0.7,default:0.2\""` (this would trigger YOLOv8n to look for dogs). If only `\"face:1.0,default:0.1\"` is given, YOLOv8n for general objects might not run if not explicitly needed.
 *   `--batch`: (Flag) Process all videos in the input directory.
 
 The cropping logic determines an optimal stationary (fixed) crop for each scene, prioritizing important content based on `--object_weights`. How this crop is presented in the final output (filled, or with padding) is controlled by `--padding` and its related arguments.
