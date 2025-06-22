@@ -59,6 +59,22 @@ def parse_color_to_bgr(color_input: str) -> Tuple[int, int, int]:
         print(f"Warning: Color '{color_input}' not recognized or invalid format. Defaulting to black.")
     return (0, 0, 0) # Default to black
 
+def get_cv2_interpolation_flag(interpolation_name: str) -> int:
+    """Maps an interpolation name string to the corresponding OpenCV flag."""
+    interpolation_name = interpolation_name.strip().lower()
+    mapping = {
+        "nearest": cv2.INTER_NEAREST,
+        "linear": cv2.INTER_LINEAR,
+        "cubic": cv2.INTER_CUBIC,
+        "area": cv2.INTER_AREA,
+        "lanczos": cv2.INTER_LANCZOS4  # Lanczos over 8x8 neighborhood
+    }
+    default_flag = cv2.INTER_LANCZOS4 # Default to Lanczos4 if name is unknown
+    flag = mapping.get(interpolation_name, None)
+    if flag is None:
+        print(f"Warning: Unknown interpolation type '{interpolation_name}'. Defaulting to 'lanczos'.")
+        return default_flag
+    return flag
 
 # FFmpeg Muxing Function
 def mux_video_audio_with_ffmpeg(
@@ -177,7 +193,8 @@ def process_video(
     padding_type_str: str,
     padding_color_str: str,
     blur_amount_param: int,
-    output_target_height: int, # Aggiunto
+    output_target_height: int,
+    interpolation_flag: int, # Nuovo parametro per il flag di interpolazione OpenCV
     content_opacity: float = 1.0,
     object_weights_map: Dict[str, float] = None,
 ) -> Optional[str]: # Restituisce il percorso del video temporaneo o None
@@ -209,7 +226,7 @@ def process_video(
         if scaled_w == 0 or scaled_h == 0:
             return output_frame
 
-        resized_content = cv2.resize(content_to_fit, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA)
+        resized_content = cv2.resize(content_to_fit, (scaled_w, scaled_h), interpolation=interpolation_flag)
 
         pad_x = (target_w - scaled_w) // 2
         pad_y = (target_h - scaled_h) // 2
@@ -238,7 +255,7 @@ def process_video(
 
             if final_copy_w > 0 and final_copy_h > 0:
                 # Resize content to fit the exact calculated copy dimensions before placing
-                content_final_size = cv2.resize(resized_content, (final_copy_w, final_copy_h), interpolation=cv2.INTER_AREA)
+                content_final_size = cv2.resize(resized_content, (final_copy_w, final_copy_h), interpolation=interpolation_flag)
                 output_frame[dst_y_start : dst_y_start + final_copy_h,
                              dst_x_start : dst_x_start + final_copy_w] = content_final_size
         return output_frame
@@ -374,7 +391,7 @@ def process_video(
                     scale_fill = max(scale_h_fill, scale_w_fill)
                     scaled_content_fill_w = int(content_w * scale_fill); scaled_content_fill_h = int(content_h * scale_fill)
                     if scaled_content_fill_w > 0 and scaled_content_fill_h > 0:
-                        content_to_process = cv2.resize(cropped_content, (scaled_content_fill_w, scaled_content_fill_h), interpolation=cv2.INTER_AREA)
+                        content_to_process = cv2.resize(cropped_content, (scaled_content_fill_w, scaled_content_fill_h), interpolation=interpolation_flag)
                         src_x = (scaled_content_fill_w - out_w) // 2; src_y = (scaled_content_fill_h - out_h) // 2
                         dst_x = 0; dst_y = 0
                         copy_width = out_w; copy_height = out_h
@@ -392,8 +409,8 @@ def process_video(
         else: # apply_padding_flag is True, usa padding_type_str
             base_frame_for_padding: Optional[np.ndarray] = None
             if padding_type_str == 'blur':
-                kernel_size_for_padding_blur = map_blur_input_to_kernel(blur_amount_param) # blur_amount_param è l'input 0-10
-                base_frame_for_padding = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA), (kernel_size_for_padding_blur, kernel_size_for_padding_blur), 0)
+                kernel_size_for_padding_blur = map_blur_input_to_kernel(blur_intensity_0_10) # blur_intensity_0_10 è il nuovo nome di blur_amount_param
+                base_frame_for_padding = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=interpolation_flag), (kernel_size_for_padding_blur, kernel_size_for_padding_blur), 0)
             elif padding_type_str == 'color':
                 color_bgr = parse_color_to_bgr(padding_color_str)
                 base_frame_for_padding = np.full((out_h, out_w, 3), color_bgr, dtype=np.uint8)
@@ -408,8 +425,8 @@ def process_video(
         if content_opacity < 1.0:
             # Per lo sfondo dell'opacità, usiamo una sfocatura basata su blur_amount_param mappato a kernel
             # Questo per coerenza, dato che blur_amount ora è 0-10.
-            opacity_bg_kernel_size = map_blur_input_to_kernel(blur_amount_param)
-            full_frame_blur_bg_for_opacity = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA),
+            opacity_bg_kernel_size = map_blur_input_to_kernel(blur_amount_param) # blur_amount_param è l'input 0-10 dall'utente
+            full_frame_blur_bg_for_opacity = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=interpolation_flag),
                                                               (opacity_bg_kernel_size, opacity_bg_kernel_size), 0)
             final_frame_output = cv2.addWeighted(final_frame_output, content_opacity, full_frame_blur_bg_for_opacity, 1 - content_opacity, 0)
 
@@ -453,6 +470,7 @@ def main() -> None:
     parser.add_argument("--blur_amount", type=int, default=5, help="Blur intensity for padding (0-10, higher is more blur) if --padding_type='blur'. Default: 5.")
     parser.add_argument("--padding_color_value", type=str, default="black", help="Color for padding if --padding_type='color'. Accepts names (e.g., 'white', 'blue') or RGB tuples as string (e.g., \"(255,0,0)\" for red).")
     parser.add_argument("--output_height", type=int, default=1080, help="Target height for the output video (e.g., 720, 1080, 1280, 1920). Width is calculated based on the target aspect ratio. Default: 1080px.")
+    parser.add_argument("--interpolation", type=str, default="lanczos", choices=['nearest', 'linear', 'cubic', 'area', 'lanczos'], help="Interpolation algorithm for resizing. 'lanczos' or 'cubic' for upscaling, 'area' for downscaling. Default: 'lanczos'.")
 
     parser.add_argument("--content_opacity", type=float, default=1.0, help="Opacity of the main content. If < 1.0, content is blended with a full-frame blurred background (applied after padding).")
     parser.add_argument(
@@ -472,6 +490,7 @@ def main() -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         parsed_weights = parse_object_weights(args.object_weights)
+        interpolation_flag_cv2 = get_cv2_interpolation_flag(args.interpolation)
 
         for vid in in_dir.iterdir():
             if vid.suffix.lower() not in {".mp4", ".mov", ".mkv", ".avi"}:
@@ -484,7 +503,8 @@ def main() -> None:
                                             padding_type_str=args.padding_type,
                                             padding_color_str=args.padding_color_value,
                                             blur_amount_param=args.blur_amount,
-                                            output_target_height=args.output_height, # Aggiunto
+                                            output_target_height=args.output_height,
+                                            interpolation_flag=interpolation_flag_cv2, # Aggiunto
                                             content_opacity=args.content_opacity,
                                             object_weights_map=parsed_weights)
 
@@ -518,12 +538,14 @@ def main() -> None:
     else: # Single file mode
         parsed_weights = parse_object_weights(args.object_weights)
         # args.input è il video originale, args.output è il file finale desiderato
+        interpolation_flag_cv2 = get_cv2_interpolation_flag(args.interpolation) # Anche per single file mode
         temp_video_file = process_video(args.input, args.output, args.ratio,
                                         apply_padding_flag=args.padding,
                                         padding_type_str=args.padding_type,
                                         padding_color_str=args.padding_color_value,
                                         blur_amount_param=args.blur_amount,
-                                        output_target_height=args.output_height, # Aggiunto
+                                        output_target_height=args.output_height,
+                                        interpolation_flag=interpolation_flag_cv2, # Aggiunto
                                         content_opacity=args.content_opacity,
                                         object_weights_map=parsed_weights)
 

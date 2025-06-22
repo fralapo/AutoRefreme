@@ -95,6 +95,12 @@ Enhancements could include automatic selection of reframing strategies (like dyn
     *   Accepts names: `black`, `white`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`.
     *   Accepts RGB tuple as string: `"(R,G,B)"` (e.g., `"(255,0,0)"` for red).
 *   `--output_height H`: (Default: `1080`, integer) Target height for the output video in pixels (e.g., 720, 1080, 1280, 1920). The width will be calculated automatically based on the target aspect ratio specified by `--ratio`. This allows control over the final output resolution.
+*   `--interpolation METHOD`: (Default: `lanczos`) Specifies the interpolation algorithm used for resizing video frames.
+    *   Choices: `nearest`, `linear`, `cubic`, `area`, `lanczos`.
+    *   `lanczos` (Lanczos over 8x8 neighborhood) or `cubic` are generally recommended for upscaling (enlarging images) as they can produce sharper results.
+    *   `area` is often best for downscaling (shrinking images).
+    *   `linear` is faster but might be less sharp than `cubic` or `lanczos`.
+    *   `nearest` is the fastest but produces blocky results, usually not recommended for video.
 *   `--content_opacity O`: (Default: `1.0`) Opacity of the main video content (0.0-1.0). If < 1.0, the content (including any padding) is blended with a blurred version of the full original frame.
 *   `--object_weights "label:w,..."`: (Default: `"face:1.0,person:0.8,default:0.5"`) Comma-separated `label:weight` pairs for object importance (e.g., `face:1.0,person:0.8`).
 *   `--batch`: (Flag) Process all videos in the input directory.
