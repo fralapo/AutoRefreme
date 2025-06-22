@@ -18,7 +18,6 @@ videos to a target aspect ratio while keeping faces and objects in view.
     ```bash
     pip install -r requirements.txt
     ```
-    This will install `opencv-python`, `mediapipe`, `scenedetect`, `ultralytics`, `huggingface_hub`, `tqdm`, and `numpy`.
 
 2.  **Install FFmpeg (for audio processing):**
     FrameShift uses FFmpeg to process and include audio from the original video into the reframed output. If FFmpeg is not installed or not found in your system's PATH, the script will still process the video but the output will not contain audio (a warning will be displayed).
