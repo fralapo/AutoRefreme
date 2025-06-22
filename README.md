@@ -94,6 +94,7 @@ Enhancements could include automatic selection of reframing strategies (like dyn
 *   `--padding_color_value STR`: (Default: `black`) Color for padding if `padding_type` is `color`.
     *   Accepts names: `black`, `white`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`.
     *   Accepts RGB tuple as string: `"(R,G,B)"` (e.g., `"(255,0,0)"` for red).
+*   `--output_height H`: (Default: `1080`, integer) Target height for the output video in pixels (e.g., 720, 1080, 1280, 1920). The width will be calculated automatically based on the target aspect ratio specified by `--ratio`. This allows control over the final output resolution.
 *   `--content_opacity O`: (Default: `1.0`) Opacity of the main video content (0.0-1.0). If < 1.0, the content (including any padding) is blended with a blurred version of the full original frame.
 *   `--object_weights "label:w,..."`: (Default: `"face:1.0,person:0.8,default:0.5"`) Comma-separated `label:weight` pairs for object importance (e.g., `face:1.0,person:0.8`).
 *   `--batch`: (Flag) Process all videos in the input directory.
