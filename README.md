@@ -112,6 +112,7 @@ Enhancements could include automatic selection of reframing strategies (like dyn
     *   Assigns importance weights to detected elements. The label `'face'` refers to faces detected by the specialized YOLOv8-Face model (or MediaPipe fallback). Other labels (e.g., `'person'`, `'car'`, `'dog'`) correspond to objects detected by YOLOv8n.
     *   YOLOv8n object detection is only run if weights are specified for labels other than `'face'` and `'default'` with a weight > 0.
     *   Example: `"--object_weights \"face:1.0,dog:0.7,default:0.2\""` (this would trigger YOLOv8n to look for dogs). If only `\"face:1.0,default:0.1\"` is given, YOLOv8n for general objects might not run if not explicitly needed.
+*   `--log_file FILE_PATH`: (Optional) Path to a file where verbose (DEBUG level) logs will be written. If not specified, logs (INFO level and above for FrameShift's own messages, plus any output from underlying libraries) are printed to the console.
 *   `--batch`: (Flag) Process all videos in the input directory.
 
 The cropping logic determines an optimal stationary (fixed) crop for each scene, prioritizing important content based on `--object_weights`. How this crop is presented in the final output (filled, or with padding) is controlled by `--padding` and its related arguments.
