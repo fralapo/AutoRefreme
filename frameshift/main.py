@@ -575,7 +575,7 @@ def run_test_suite(original_args: argparse.Namespace, base_ffmpeg_path: Optional
         {"name": "DefaultFill", "params": {"padding": False}},
         {"name": "PadBlack", "params": {"padding": True, "padding_type": "black"}},
         {"name": "PadBlur_Low", "params": {"padding": True, "padding_type": "blur", "blur_amount": 2}},
-        {"name": "PadBlur_High", "params": {"padding": True, "padding_type": "blur", "blur_amount": 8}},
+        {"name": "PadBlur_High", "params": {"padding": True, "padding_type": "blur", "blur_amount": 10}}, # Changed 8 to 10
         # {"name": "PadColor_Red", "params": {"padding": True, "padding_type": "color", "padding_color_value": "red"}}, # Rimosso per ora per evitare dipendenza da parse_color_string in _process_input_target se non necessario
         {"name": "Interpolation_Linear", "params": {"interpolation": "linear", "padding": False}},
         {"name": "Interpolation_Cubic_PadBlack", "params": {"interpolation": "cubic", "padding": True, "padding_type": "black"}},
