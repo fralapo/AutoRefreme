@@ -1,5 +1,7 @@
 # FrameShift
-
+<p align="center">
+  <img src="img/icon.png" alt="icon" style="width:25%;">
+</p>
 FrameShift is an open source implementation inspired by Google AutoFlip. It automatically reframes
 videos to a target aspect ratio while keeping faces and objects in view.
 
