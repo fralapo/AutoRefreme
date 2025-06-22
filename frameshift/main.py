@@ -447,6 +447,164 @@ def process_video(
     return str(temp_video_path)
 
 
+def _process_input_target(
+    args_for_scenario: argparse.Namespace,
+    ffmpeg_path_for_scenario: Optional[str],
+    logger_instance: logging.Logger,
+    is_batch_from_original: bool,
+    original_input_path_str: str,
+    test_output_dir_for_scenario: Path, # Directory dove salvare gli output di questo scenario specifico
+    scenario_name_suffix: str
+    ):
+    """Helper per processare un singolo input o un batch per uno scenario di test."""
+    logger_instance.info(f"Processing with args: {vars(args_for_scenario)}")
+
+    parsed_weights = parse_object_weights(args_for_scenario.object_weights)
+    interpolation_flag_cv2 = get_cv2_interpolation_flag(args_for_scenario.interpolation)
+
+    if is_batch_from_original:
+        in_dir = Path(original_input_path_str) # Usa l'input originale per il batch
+        if not in_dir.is_dir():
+            logger_instance.error(f"Test suite batch mode: Input path '{original_input_path_str}' is not a directory. Skipping scenario.")
+            return
+
+        logger_instance.info(f"Batch processing for scenario '{scenario_name_suffix}' from input dir: {in_dir}")
+        for vid_path_obj in in_dir.iterdir():
+            if vid_path_obj.suffix.lower() not in {".mp4", ".mov", ".mkv", ".avi"}:
+                continue
+
+            test_out_filename = f"{vid_path_obj.stem}_{scenario_name_suffix}{vid_path_obj.suffix}"
+            final_output_path_scenario = test_output_dir_for_scenario / test_out_filename
+            logger_instance.info(f"Test case: Input: {vid_path_obj}, Output: {final_output_path_scenario}")
+
+            temp_video_file = process_video(
+                str(vid_path_obj),
+                str(final_output_path_scenario), # Passa il percorso finale desiderato per questo test
+                args_for_scenario.ratio,
+                apply_padding_flag=args_for_scenario.padding,
+                padding_type_str=args_for_scenario.padding_type,
+                padding_color_str=args_for_scenario.padding_color_value,
+                blur_amount_param=args_for_scenario.blur_amount,
+                output_target_height=args_for_scenario.output_height,
+                interpolation_flag=interpolation_flag_cv2,
+                content_opacity=args_for_scenario.content_opacity,
+                object_weights_map=parsed_weights
+            )
+            # Gestione Muxing e file temp (come in main)
+            if temp_video_file:
+                if ffmpeg_path_for_scenario:
+                    success = mux_video_audio_with_ffmpeg(str(vid_path_obj), temp_video_file, str(final_output_path_scenario), ffmpeg_path_for_scenario)
+                    if success:
+                        try: os.remove(temp_video_file)
+                        except OSError as e: logger_instance.warning(f"Could not remove temp video {temp_video_file}: {e}")
+                    else: # Muxing fallito, rinomina temp a final
+                        logger_instance.warning(f"Muxing failed for {final_output_path_scenario}, saving video without audio.")
+                        try: shutil.move(temp_video_file, str(final_output_path_scenario))
+                        except OSError as e: logger_instance.error(f"Could not rename temp video {temp_video_file} to {final_output_path_scenario}: {e}", exc_info=True)
+                else: # FFmpeg non disponibile
+                    try: shutil.move(temp_video_file, str(final_output_path_scenario))
+                    except OSError as e: logger_instance.error(f"Could not rename temp video {temp_video_file} to {final_output_path_scenario}: {e}", exc_info=True)
+            else:
+                logger_instance.error(f"Video processing (process_video call) failed for {vid_path_obj}, no temp file.")
+    else: # Single file mode
+        original_input_file = Path(original_input_path_str)
+        if not original_input_file.is_file():
+            logger_instance.error(f"Test suite single file mode: Input path '{original_input_file}' is not a file. Skipping scenario.")
+            return
+
+        test_out_filename = f"{original_input_file.stem}_{scenario_name_suffix}{original_input_file.suffix}"
+        final_output_path_scenario = test_output_dir_for_scenario / test_out_filename
+        logger_instance.info(f"Test case: Input: {original_input_file}, Output: {final_output_path_scenario}")
+
+        temp_video_file = process_video(
+            str(original_input_file),
+            str(final_output_path_scenario), # Passa il percorso finale desiderato per questo test
+            args_for_scenario.ratio,
+            apply_padding_flag=args_for_scenario.padding,
+            padding_type_str=args_for_scenario.padding_type,
+            padding_color_str=args_for_scenario.padding_color_value,
+            blur_amount_param=args_for_scenario.blur_amount,
+            output_target_height=args_for_scenario.output_height,
+            interpolation_flag=interpolation_flag_cv2,
+            content_opacity=args_for_scenario.content_opacity,
+            object_weights_map=parsed_weights
+        )
+        # Gestione Muxing e file temp (come in main)
+        if temp_video_file:
+            if ffmpeg_path_for_scenario:
+                success = mux_video_audio_with_ffmpeg(str(original_input_file), temp_video_file, str(final_output_path_scenario), ffmpeg_path_for_scenario)
+                if success:
+                    try: os.remove(temp_video_file)
+                    except OSError as e: logger_instance.warning(f"Could not remove temp video {temp_video_file}: {e}")
+                else:
+                    logger_instance.warning(f"Muxing failed for {final_output_path_scenario}, saving video without audio.")
+                    try: shutil.move(temp_video_file, str(final_output_path_scenario))
+                    except OSError as e: logger_instance.error(f"Could not rename temp video {temp_video_file} to {final_output_path_scenario}: {e}", exc_info=True)
+            else:
+                try: shutil.move(temp_video_file, str(final_output_path_scenario))
+                except OSError as e: logger_instance.error(f"Could not rename temp video {temp_video_file} to {final_output_path_scenario}: {e}", exc_info=True)
+        else:
+            logger_instance.error(f"Video processing (process_video call) failed for {original_input_file}, no temp file.")
+
+
+def run_test_suite(original_args: argparse.Namespace, base_ffmpeg_path: Optional[str], logger_instance: logging.Logger):
+    logger_instance.info("--- Starting Test Suite ---")
+
+    # Determine base output directory for test files
+    if original_args.batch and os.path.isdir(original_args.output):
+        base_test_output_dir = Path(original_args.output) / "frameshift_test_outputs"
+    elif not original_args.batch and Path(original_args.output).name: # Check if it looks like a file path
+        base_test_output_dir = Path(original_args.output).parent / (Path(original_args.output).stem + "_test_outputs")
+    else: # Fallback or if original_args.output is a dir but not for batch
+        base_test_output_dir = Path("frameshift_test_outputs").resolve()
+
+    try:
+        base_test_output_dir.mkdir(parents=True, exist_ok=True)
+        logger_instance.info(f"Test outputs will be saved in: {base_test_output_dir}")
+    except OSError as e:
+        logger_instance.error(f"Could not create test output directory {base_test_output_dir}: {e}. Aborting test suite.", exc_info=True)
+        return
+
+    test_scenarios = [
+        {"name": "DefaultFill", "params": {"padding": False}}, # Default behavior should be fill
+        {"name": "PadBlack", "params": {"padding": True, "padding_type": "black"}},
+        {"name": "PadBlur_Low", "params": {"padding": True, "padding_type": "blur", "blur_amount": 2}},
+        {"name": "PadBlur_High", "params": {"padding": True, "padding_type": "blur", "blur_amount": 8}},
+        {"name": "PadColor_Red", "params": {"padding": True, "padding_type": "color", "padding_color_value": "red"}},
+        {"name": "Interpolation_Linear", "params": {"interpolation": "linear", "padding": False}}, # Test fill with linear
+        {"name": "Interpolation_Cubic_PadBlack", "params": {"interpolation": "cubic", "padding": True, "padding_type": "black"}},
+        {"name": "OutputHeight_720p", "params": {"output_height": 720, "padding": False}},
+        {"name": "OutputHeight_1280p_PadBlur", "params": {"output_height": 1280, "padding": True, "padding_type": "blur"}},
+        {"name": "ObjWeights_FocusPerson", "params": {"object_weights": "person:1.0,face:0.2,default:0.1", "padding": False}},
+    ]
+
+    for scenario in test_scenarios:
+        scenario_name = scenario["name"]
+        scenario_params = scenario["params"]
+        logger_instance.info(f"--- Starting Test Scenario: {scenario_name} ---")
+
+        # Create a copy of original_args and update with scenario-specific params
+        current_test_args = argparse.Namespace(**vars(original_args))
+        for key, value in scenario_params.items():
+            setattr(current_test_args, key, value)
+
+        # Log the effective arguments for this scenario
+        # logger_instance.debug(f"Effective args for scenario '{scenario_name}': {vars(current_test_args)}")
+
+        _process_input_target(
+            args_for_scenario=current_test_args,
+            ffmpeg_path_for_scenario=base_ffmpeg_path,
+            logger_instance=logger_instance,
+            is_batch_from_original=original_args.batch,
+            original_input_path_str=original_args.input, # This is str
+            test_output_dir_for_scenario=base_test_output_dir,
+            scenario_name_suffix=scenario_name
+        )
+        logger_instance.info(f"--- Finished Test Scenario: {scenario_name} ---")
+
+    logger_instance.info("--- Test Suite Finished ---")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="FrameShift auto reframing tool (stationary mode only).")
     # Gli argomenti verranno parsati prima, poi si configura il logging.
@@ -487,6 +645,7 @@ def main() -> None:
              "Assigns importance weights to detected objects. 'default' for unspecified classes."
     )
     parser.add_argument("--log_file", type=str, default=None, help="Path to a file where verbose logs will be written. If not specified, logs primarily go to console.")
+    parser.add_argument("--test", action="store_true", default=False, help="Run in test mode. Uses other provided arguments (input, output, ratio) as a base to generate and run multiple test scenarios with varied settings, logging results extensively.")
     parser.add_argument("--batch", action="store_true", help="Process all videos in input directory")
 
     args = parser.parse_args()
@@ -496,23 +655,43 @@ def main() -> None:
     logger.setLevel(logging.DEBUG)  # Capture all debug messages and above
 
     # Console handler (always on)
-    console_handler = logging.StreamHandler() # Defaults to sys.stderr
+    console_handler = logging.StreamHandler()
     console_formatter = logging.Formatter('%(levelname)s: %(message)s')
     console_handler.setFormatter(console_formatter)
-    console_handler.setLevel(logging.INFO) # Only show INFO and above on console
+    console_handler.setLevel(logging.INFO)
     logger.addHandler(console_handler)
 
-    if args.log_file:
+    log_file_path = args.log_file
+    file_log_level = logging.DEBUG
+
+    if args.test:
+        logger.info("--- Test Mode Activated ---")
+        console_handler.setLevel(logging.DEBUG) # Show more on console during tests
+        if not args.log_file: # If user didn't specify a log file for test, create a default one
+            try:
+                # Determine base output path for default test log
+                if os.path.isdir(args.output):
+                    default_log_dir = Path(args.output)
+                else: # args.output is a file
+                    default_log_dir = Path(args.output).parent
+                default_log_dir.mkdir(parents=True, exist_ok=True) # Ensure dir exists
+                log_file_path = default_log_dir / f"frameshift_test_suite_{Path(args.input).name}.log"
+            except Exception as e:
+                # Fallback if path from args.output is problematic
+                log_file_path = Path(f"frameshift_test_suite_{Path(args.input).name}.log").resolve()
+                logger.warning(f"Could not determine default log path from output arg, using {log_file_path}: {e}")
+        logger.info(f"Test mode will log detailed output to: {log_file_path}")
+
+    if log_file_path:
         try:
-            file_handler = logging.FileHandler(args.log_file, mode='w', encoding='utf-8')
-            # More detailed formatter for file logs
+            file_handler = logging.FileHandler(log_file_path, mode='w', encoding='utf-8')
             file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(module)s.%(funcName)s:%(lineno)d - %(message)s')
             file_handler.setFormatter(file_formatter)
-            file_handler.setLevel(logging.DEBUG) # Log everything to file
+            file_handler.setLevel(file_log_level)
             logger.addHandler(file_handler)
-            logger.info(f"Verbose logging enabled to file: {args.log_file}")
+            logger.info(f"Logging to file: {log_file_path} (Level: {logging.getLevelName(file_log_level)})")
         except Exception as e:
-            logger.error(f"Could not set up file logging to {args.log_file}: {e}", exc_info=True) # Log exception info
+            logger.error(f"Could not set up file logging to {log_file_path}: {e}", exc_info=True)
 
     # Now that logger is configured, check for ffmpeg
     ffmpeg_path = shutil.which('ffmpeg')
@@ -522,7 +701,11 @@ def main() -> None:
     # else:
     #     logger.debug(f"Found ffmpeg at: {ffmpeg_path}")
 
+    if args.test:
+        run_test_suite(original_args=args, base_ffmpeg_path=ffmpeg_path, logger_instance=logger)
+        return  # Termina dopo l'esecuzione della test suite
 
+    # Logica di processamento normale (singolo file o batch)
     if args.batch:
         in_dir = Path(args.input)
         out_dir = Path(args.output)
