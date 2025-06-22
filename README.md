@@ -1,5 +1,5 @@
 # FrameShift
-<p align="center">
+<p align="left">
   <img src="img/icon.png" alt="icon" style="width:25%;">
 </p>
 FrameShift is an open source implementation inspired by Google AutoFlip. It automatically reframes
