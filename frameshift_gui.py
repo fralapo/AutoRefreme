@@ -9,6 +9,8 @@ import io
 import logging
 import cv2
 import math
+import platform
+import subprocess
 
 # --- UI Constants ---
 ALL_POSSIBLE_OBJECT_LABELS = sorted(list(set(["face", "person"] + [
@@ -598,6 +600,60 @@ class FrameShiftGUI:
         self.log_message(f"--- {status} ---", "INFO")
         if not self.cancel_event.is_set():
             messagebox.showinfo("Completed", "Processing has finished.")
+            # Open output location if processing was successful
+            if self.output_path.get():
+                self.log_message(f"Attempting to open output location: {self.output_path.get()}")
+                self._open_output_location(self.output_path.get())
+            else:
+                self.log_message("Output path is not set, cannot open location.", "WARNING")
+
+    def _open_output_location(self, path_str: str):
+        try:
+            path = Path(path_str)
+            system = platform.system()
+
+            # Determine the actual path to open (directory or file's parent directory)
+            if path.is_file():
+                open_path = str(path.parent) # Open parent directory for a file
+                select_path = str(path)      # Path to the file itself for selection (if supported)
+            elif path.is_dir():
+                open_path = str(path)        # Open the directory itself
+                select_path = None           # No specific file to select
+            else:
+                self.log_message(f"Output path {path_str} does not exist or is not a file/directory. Cannot open.", "ERROR")
+                return
+
+            self.log_message(f"System: {system}, Path to open/reveal: {open_path if not select_path else select_path}")
+
+            if system == "Windows":
+                if select_path and Path(select_path).exists(): # Check if select_path is valid
+                    # Using /select, will open the folder and select the file
+                    subprocess.run(['explorer', '/select,', select_path], check=True)
+                elif Path(open_path).exists(): # Fallback to opening the directory
+                    subprocess.run(['explorer', open_path], check=True)
+                else:
+                    self.log_message(f"Path {open_path} or {select_path} not found on Windows.", "ERROR")
+            elif system == "Darwin": # macOS
+                if select_path and Path(select_path).exists():
+                     # -R reveals the file in Finder
+                    subprocess.run(['open', '-R', select_path], check=True)
+                elif Path(open_path).exists():
+                    subprocess.run(['open', open_path], check=True) # Open the directory
+                else:
+                    self.log_message(f"Path {open_path} or {select_path} not found on macOS.", "ERROR")
+            elif system == "Linux":
+                if Path(open_path).exists(): # xdg-open usually opens the directory
+                    subprocess.run(['xdg-open', open_path], check=True)
+                else:
+                    self.log_message(f"Path {open_path} not found on Linux.", "ERROR")
+            else:
+                self.log_message(f"Unsupported operating system: {system}. Cannot open output location automatically.", "WARNING")
+        except FileNotFoundError:
+            self.log_message(f"File explorer command not found. Ensure it's in your PATH.", "ERROR")
+        except subprocess.CalledProcessError as e:
+            self.log_message(f"Error opening output location: {e}", "ERROR")
+        except Exception as e:
+            self.log_message(f"An unexpected error occurred while opening output location: {e}", "ERROR")
 
 def main_gui():
     root = tk.Tk()
