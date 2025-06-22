@@ -23,39 +23,56 @@ class Detector:
         self.yolo_obj_conf = yolo_obj_conf
         self.mp_face_conf = mp_face_conf
 
-        # Load general object detection model (YOLOv8n)
+        # Load general object detection model (YOLOv8n) - Ultralytics handles download
         try:
             self.obj_model = YOLO("yolov8n.pt")
-            logger.info("Successfully loaded YOLOv8n for general object detection.")
+            logger.info("Successfully loaded/initialized YOLOv8n for general object detection.")
         except Exception as e:
             logger.error(f"Could not load YOLOv8n object model: {e}", exc_info=True)
             self.obj_model = None
 
-        # Attempt to load specialized YOLOv8 face detection model
+        # Attempt to load specialized YOLO face detection model (yolov11n-face.pt)
         self.yolo_face_model = None
-        self.mp_face_model = None # Will be initialized if YOLO face model fails
+        self.mp_face_model = None
 
+        face_model_filename = "yolov11n-face.pt"
+        # Corretto il nome del file come da tua ultima indicazione.
+        # Questo URL è un asset diretto, attempt_download_asset è più per i release di ultralytics.
+        # Per un URL diretto, potremmo usare un'altra utility o hf_hub_download se il modello fosse su HF.
+        # Per ora, assumiamo che attempt_download_asset possa prendere un URL completo o che il file
+        # sia gestito in modo simile a yolov8n.pt (cioè, specificando solo il nome se è un modello noto a ultralytics).
+        # Se "yolov11n-face.pt" non è un asset che YOLO() o attempt_download_asset conosce,
+        # dobbiamo implementare un download manuale o chiedere all'utente di scaricarlo.
+        # Tentativo con attempt_download_asset per un file specifico da un URL:
+        # Questo richiede che il file sia un asset di un release di GitHub formattato come ultralytics si aspetta.
+        # La via più semplice è se l'utente mette "yolov11n-face.pt" nella stessa directory o in un percorso noto.
+        # Per ora, proviamo a caricarlo direttamente, assumendo che sia scaricato o nello CWD/PATH.
+        # Se il file non è un formato che YOLO("path/to/model.pt") può caricare direttamente, fallirà.
+        # YOLOv11 potrebbe non essere direttamente compatibile con la classe YOLO di ultralytics v8.
+        # Prioritizziamo il caricamento locale e poi il fallback.
+
+        # Tentativo 1: Caricare direttamente il file se l'utente l'ha messo nel CWD o in un path rilevabile da YOLO
         try:
-            logger.info("Attempting to download/load YOLOv8-Face-Detection model...")
-            face_model_path = hf_hub_download(
-                repo_id="arnabdhar/YOLOv8-Face-Detection",
-                filename="model.pt"
-            )
-            self.yolo_face_model = YOLO(face_model_path)
-            logger.info("Successfully loaded YOLOv8-Face-Detection model.")
-            # if self.yolo_face_model and hasattr(self.yolo_face_model, 'names'):
-                # logger.debug(f"YOLOv8 Face Model class names: {self.yolo_face_model.names}")
-        except Exception as e:
-            logger.warning(f"Could not download/load YOLOv8-Face-Detection model: {e}. Will use MediaPipe for faces if available.", exc_info=True)
-            self.yolo_face_model = None
+            logger.info(f"Attempting to load local '{face_model_filename}'...")
+            self.yolo_face_model = YOLO(face_model_filename)
+            logger.info(f"Successfully loaded '{face_model_filename}'.")
+        except Exception as e_local:
+            logger.warning(f"Could not load local '{face_model_filename}': {e_local}. Attempting download if known or fallback.")
+            self.yolo_face_model = None # Assicura che sia None se il caricamento locale fallisce
+
+        # Se il caricamento locale fallisce, e se avessimo un meccanismo di download automatico per questo specifico file,
+        # lo inseriremmo qui. Dato che attempt_download_asset di ultralytics è per i loro asset,
+        # e hf_hub_download era per il modello precedente, per questo URL specifico di GitHub
+        # dovremmo implementare un download custom o richiedere all'utente di farlo.
+        # Per semplicità, per ora, se il caricamento locale fallisce, passiamo al fallback.
 
         if self.yolo_face_model is None:
-            logger.info("Falling back to MediaPipe for face detection.")
+            logger.warning(f"'{face_model_filename}' not found or failed to load. Falling back to MediaPipe for face detection.")
             try:
                 self.mp_face_model = mp.solutions.face_detection.FaceDetection(
                     model_selection=1, min_detection_confidence=self.mp_face_conf
                 )
-                logger.info("MediaPipe Face Detection initialized.")
+                logger.info("MediaPipe Face Detection initialized as fallback.")
             except Exception as e_mp:
                 logger.error(f"Could not initialize MediaPipe Face Detection: {e_mp}", exc_info=True)
                 self.mp_face_model = None

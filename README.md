@@ -70,7 +70,7 @@ FrameShift automatically reframes videos, using a stationary (fixed) crop for ea
    ```bash
    python -m frameshift.main my_video.mp4 test_run_output.mp4 --ratio 16:9 --test
    ```
-   *(Check `test_run_output_test_outputs/` directory and `test_run_output_test_suite.log` or similar for results.)*
+   *(Check `test_run_output_test_outputs/` directory and `test_run_output_test_suite.log` or similar for results. If an error occurs in one test scenario, the suite will log it and continue to the next.)*
 
 ## How FrameShift Works (Inspired by Google AutoFlip)
 
@@ -78,8 +78,8 @@ FrameShift intelligently reframes videos using a **stationary (fixed) crop per s
 
 1.  **Scene Detection:** Divides the video into scenes using PySceneDetect.
 2.  **Content Analysis:**
-    *   **Faces:** Primarily detected using a specialized YOLOv8 model from Hugging Face (`arnabdhar/YOLOv8-Face-Detection`). MediaPipe is used as a fallback if the YOLO face model fails to load or during its initial download.
-    *   **Other Objects:** Detected using the general-purpose YOLOv8n model. This step is performed *only if* you specify weights for object classes other than 'face' in the `--object_weights` argument. This optimizes performance when only face-centric reframing is needed.
+    *   **Faces:** The script attempts to load a specialized YOLO model for face detection, `yolov11n-face.pt` (expected to be available locally where the script or YOLO can find it, e.g., current working directory). If this model is not found or fails to load, MediaPipe's face detection is used as a fallback.
+    *   **Other Objects:** Detected using the general-purpose YOLOv8n model (which Ultralytics downloads automatically if not present). This object detection step is performed *only if* you specify weights for object classes other than 'face' (and 'default') with a weight greater than 0 in the `--object_weights` argument. This optimizes performance when only face-centric reframing is needed.
     *   The importance of all detected elements in guiding the crop is determined by the `--object_weights` argument.
 3.  **Optimal Stationary Crop:** For each scene, calculates a fixed crop window that best frames the weighted area of interest at the target aspect ratio.
 4.  **Output Generation (Cropping/Padding):**
