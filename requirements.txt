@@ -5,3 +5,4 @@ ultralytics
 huggingface_hub
 tqdm
 numpy
+tensorboard
