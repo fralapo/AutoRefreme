@@ -33,7 +33,7 @@ class Detector:
         except Exception as e:
             logger.error(f"""Could not load general object model ("yolo11n.pt"): {e}. If this is the first time running
                          with yolo11n.pt, ensure you have an internet connection for download. If issues persist,
-                         consider trying with \"yolov8n.pt\" instead.""", exc_info=True)
+                         please check the model path and file integrity.""", exc_info=True)
 
             self.obj_model = None
 
