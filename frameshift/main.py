@@ -177,6 +177,7 @@ def process_video(
     padding_type_str: str,
     padding_color_str: str,
     blur_amount_param: int,
+    output_target_height: int, # Aggiunto
     content_opacity: float = 1.0,
     object_weights_map: Dict[str, float] = None,
 ) -> Optional[str]: # Restituisce il percorso del video temporaneo o None
@@ -256,14 +257,21 @@ def process_video(
     scenes = detect_scenes(input_path)
     scene_bounds = sorted(scenes.items())
 
-    out_w = int(height * aspect_ratio)
-    out_h = height
-    if out_w > width:
-        out_w = width
-        out_h = int(out_w / aspect_ratio)
+    # Calcola le dimensioni di output basate sull'altezza target e l'aspect ratio
+    # aspect_ratio qui è W/H
+    out_h = output_target_height
+    out_w = int(round(out_h * aspect_ratio))
+
+    # Assicura che out_w sia almeno 2 e pari (preferibile per molti codec)
+    if out_w < 2:
+        out_w = 2
+    if out_w % 2 != 0:
+        out_w += 1 # Rende out_w pari aggiungendo 1 se dispari (es. 719->720)
+                   # Se out_w era 1 (improbabile), diventa 2.
+
+    # print(f"DEBUG: Input dims: {width}x{height}, Target Output Dims: {out_w}x{out_h}, AR: {aspect_ratio}")
 
     # Crea un nome per il file video temporaneo (senza audio)
-    # output_path è il percorso finale desiderato, lo usiamo per generare un nome temp
     temp_video_path = Path(output_path).parent / f"{Path(output_path).stem}_temp_video.mp4"
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -444,6 +452,7 @@ def main() -> None:
     )
     parser.add_argument("--blur_amount", type=int, default=5, help="Blur intensity for padding (0-10, higher is more blur) if --padding_type='blur'. Default: 5.")
     parser.add_argument("--padding_color_value", type=str, default="black", help="Color for padding if --padding_type='color'. Accepts names (e.g., 'white', 'blue') or RGB tuples as string (e.g., \"(255,0,0)\" for red).")
+    parser.add_argument("--output_height", type=int, default=1080, help="Target height for the output video (e.g., 720, 1080, 1280, 1920). Width is calculated based on the target aspect ratio. Default: 1080px.")
 
     parser.add_argument("--content_opacity", type=float, default=1.0, help="Opacity of the main content. If < 1.0, content is blended with a full-frame blurred background (applied after padding).")
     parser.add_argument(
@@ -475,6 +484,7 @@ def main() -> None:
                                             padding_type_str=args.padding_type,
                                             padding_color_str=args.padding_color_value,
                                             blur_amount_param=args.blur_amount,
+                                            output_target_height=args.output_height, # Aggiunto
                                             content_opacity=args.content_opacity,
                                             object_weights_map=parsed_weights)
 
@@ -513,6 +523,7 @@ def main() -> None:
                                         padding_type_str=args.padding_type,
                                         padding_color_str=args.padding_color_value,
                                         blur_amount_param=args.blur_amount,
+                                        output_target_height=args.output_height, # Aggiunto
                                         content_opacity=args.content_opacity,
                                         object_weights_map=parsed_weights)
 
