@@ -10,6 +10,7 @@ import subprocess # Added for ffmpeg
 import shutil # Added for shutil.which
 import os # Added for os.remove and os.replace
 import logging # Added for logging
+import threading # Added for cancel_event type hint
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
 
@@ -204,6 +205,7 @@ def process_video(
     detector: Detector, # Aggiunto detector instance
     content_opacity: float = 1.0,
     object_weights_map: Dict[str, float] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Optional[str]:
     if object_weights_map is None:
         object_weights_map = {'face': 1.0, 'person': 0.8, 'default': 0.5}
@@ -340,6 +342,9 @@ def process_video(
 
     pbar = tqdm(total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), desc="Processing")
     while True:
+        if cancel_event and cancel_event.is_set():
+            logger.info("Process video: Cancellation detected during frame processing.")
+            break
         ret, frame = cap.read()
         if not ret:
             break
@@ -444,6 +449,17 @@ def process_video(
     pbar.close()
     cap.release()
     out.release()
+
+    if cancel_event and cancel_event.is_set():
+        logger.info(f"Process video: Cleaning up temporary file {temp_video_path} due to cancellation.")
+        try:
+            if os.path.exists(temp_video_path):
+                os.remove(temp_video_path)
+            return "cancelled" # Special string to indicate cancellation
+        except OSError as e:
+            logger.error(f"Error removing temporary file {temp_video_path} after cancellation: {e}")
+            return "cancelled_error_cleanup"
+
     # print(f"DEBUG: Finished writing temporary video: {temp_video_path}")
     return str(temp_video_path)
 

@@ -270,7 +270,7 @@ class FrameShiftGUI:
         ToolTip(self.padding_type_combo, "Choose the type of bars to add: 'blur', 'black', or 'color'.")
         ToolTip(self.add_weight_combo, "Choose an object to add to the detection weights list.")
         ToolTip(self.start_button, "Start the reframing process with the current settings.")
-        ToolTip(self.cancel_button, "Request to stop the current process (effective between videos in batch mode).")
+        ToolTip(self.cancel_button, "Request to stop the current process. Should take effect relatively quickly.")
 
     def _render_weights_ui(self):
         for widget in self.weights_list_frame.winfo_children(): widget.destroy()
@@ -486,6 +486,7 @@ class FrameShiftGUI:
                 "content_opacity": self.content_opacity.get(),
                 "object_weights_map": parse_object_weights(self.get_current_weights_string()),
                 "detector": self.detector,
+                "cancel_event": self.cancel_event, # Pass the cancel event
             }
             ffmpeg_path = shutil.which("ffmpeg")
             
@@ -503,17 +504,43 @@ class FrameShiftGUI:
                     self.update_progress_label("")
                     self.log_message(f"Processing file {i+1}/{num_videos}: {vid_path.name}")
                     final_output_file = out_dir / f"{vid_path.stem}_reframed{vid_path.suffix}"
-                    temp_video_file = process_video(input_path=str(vid_path), output_path=str(final_output_file), **common_args)
-                    self._handle_muxing_and_temp_file(str(vid_path), temp_video_file, str(final_output_file), ffmpeg_path)
+
+                    temp_video_file_or_status = process_video(
+                        input_path=str(vid_path),
+                        output_path=str(final_output_file), # Explicitly pass output_path
+                        **common_args # common_args should not contain output_path
+                    )
+
+                    if self.cancel_event.is_set(): # Check immediately after process_video
+                        self.log_message(f"Cancellation detected after processing {vid_path.name}.", "WARNING")
+                        # temp_video_file_or_status would be "cancelled" or "cancelled_error_cleanup"
+                        # The file is already handled by process_video if cancelled.
+                        break # Break from batch loop
+
+                    self._handle_muxing_and_temp_file(str(vid_path), temp_video_file_or_status, str(final_output_file), ffmpeg_path)
                     self.master.after(0, lambda v=i+1: self.progress_bar.config(value=v))
-            else:
+            else: # Single file processing
                 self.update_progress_label("")
                 self.master.after(0, lambda: self.progress_bar.config(mode='indeterminate'))
-                temp_video_file = process_video(input_path=self.input_path.get(), output_path=self.output_path.get(), **common_args)
-                self._handle_muxing_and_temp_file(self.input_path.get(), temp_video_file, self.output_path.get(), ffmpeg_path)
+
+                temp_video_file_or_status = process_video(
+                    input_path=self.input_path.get(),
+                    output_path=self.output_path.get(), # Explicitly pass output_path
+                    **common_args # common_args should not contain output_path
+                )
+
+                if self.cancel_event.is_set(): # Check immediately after process_video
+                    self.log_message("Cancellation detected during single video processing.", "WARNING")
+                    # temp_video_file_or_status would be "cancelled" or "cancelled_error_cleanup"
+                    # The file is already handled by process_video. No further action on file needed here.
+                else:
+                    # Only mux if not cancelled.
+                    self._handle_muxing_and_temp_file(self.input_path.get(), temp_video_file_or_status, self.output_path.get(), ffmpeg_path)
             
             if not self.cancel_event.is_set():
                 self.log_message("Processing completed.")
+            else:
+                self.log_message("Processing was cancelled by the user.", "WARNING")
 
         except Exception as e:
             self.log_message(f"CRITICAL ERROR: {e}", "ERROR")
@@ -525,26 +552,39 @@ class FrameShiftGUI:
             sys.stderr = original_stderr
             self.master.after(0, self._processing_finished)
 
-    def _handle_muxing_and_temp_file(self, original_input, temp_video, final_output, ffmpeg_path):
-        if self.cancel_event.is_set(): return
-        if not temp_video or not os.path.exists(temp_video):
-            self.log_message(f"Processing failed for {Path(original_input).name}, no temporary file generated.", "ERROR")
+    def _handle_muxing_and_temp_file(self, original_input, temp_video_or_status, final_output, ffmpeg_path):
+        if self.cancel_event.is_set():
+            self.log_message(f"Muxing skipped for {Path(original_input).name} due to cancellation.", "WARNING")
+            # temp_video_or_status should be 'cancelled' or 'cancelled_error_cleanup', file already handled by process_video
             return
+
+        # Check if process_video returned a status string indicating cancellation or error
+        if isinstance(temp_video_or_status, str) and temp_video_or_status.startswith("cancelled"):
+            self.log_message(f"Muxing skipped for {Path(original_input).name} as processing was cancelled.", "INFO")
+            # The file should have been cleaned up by process_video already.
+            return
+
+        temp_video_path = temp_video_or_status # It's a path string if not cancelled
+
+        if not temp_video_path or not os.path.exists(temp_video_path):
+            self.log_message(f"Processing failed or was cancelled for {Path(original_input).name}, no temporary file available for muxing.", "ERROR")
+            return
+
         if not ffmpeg_path:
             self.log_message(f"FFmpeg not found, saving video without audio.", "WARNING")
-            try: shutil.move(temp_video, final_output)
+            try: shutil.move(temp_video_path, final_output) # Use temp_video_path
             except Exception as e: self.log_message(f"Failed to move file: {e}", "ERROR")
             return
         
         self.log_message(f"Muxing audio for {Path(final_output).name}...")
-        success = mux_video_audio_with_ffmpeg(original_input, temp_video, final_output, ffmpeg_path)
+        success = mux_video_audio_with_ffmpeg(original_input, temp_video_path, final_output, ffmpeg_path) # Use temp_video_path
         if success:
             self.log_message(f"Audio muxed successfully. Final file: {final_output}")
-            try: os.remove(temp_video)
+            try: os.remove(temp_video_path) # Use temp_video_path
             except OSError as e: self.log_message(f"Could not remove temp file: {e}", "WARNING")
         else:
             self.log_message(f"Audio muxing failed. Moving video without audio.", "WARNING")
-            try: shutil.move(temp_video, final_output)
+            try: shutil.move(temp_video_path, final_output) # Use temp_video_path
             except Exception as e: self.log_message(f"Failed to move temp file: {e}", "ERROR")
 
     def _processing_finished(self):
