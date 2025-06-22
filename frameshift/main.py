@@ -200,10 +200,11 @@ def process_video(
     padding_color_str: str,
     blur_amount_param: int,
     output_target_height: int,
-    interpolation_flag: int, # Nuovo parametro per il flag di interpolazione OpenCV
+    interpolation_flag: int,
+    detector: Detector, # Aggiunto detector instance
     content_opacity: float = 1.0,
     object_weights_map: Dict[str, float] = None,
-) -> Optional[str]: # Restituisce il percorso del video temporaneo o None
+) -> Optional[str]:
     if object_weights_map is None:
         object_weights_map = {'face': 1.0, 'person': 0.8, 'default': 0.5}
 
@@ -276,7 +277,7 @@ def process_video(
         aspect_ratio = float(w_str) / float(h_str)
     else:
         aspect_ratio = float(ratio)
-    detector = Detector()
+    # detector = Detector() # Rimosso, ora viene passato come argomento
     cap = cv2.VideoCapture(input_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -328,11 +329,11 @@ def process_video(
         input_path,
         start,
         current_scene_end,
-        detector,
+        detector, # Usa l'istanza detector passata a process_video
         width,
         height,
         aspect_ratio,
-        object_weights_map, # Passare i pesi
+        object_weights_map,
     )
     prev_box = np.array(initial_crop_for_stationary)
     # print(f"DEBUG: Initial prev_box for stationary: {prev_box}")
@@ -358,11 +359,11 @@ def process_video(
 
             # Ricalcola il box fisso per la nuova scena (modalità stationary implicita)
             prev_box = np.array(
-                sample_crop( # sample_crop usa active_obj_labels_for_yolo internamente
+                sample_crop(
                     input_path,
                     start,
                     current_scene_end,
-                    detector,
+                    detector, # Usa l'istanza detector passata a process_video
                     width,
                     height,
                     aspect_ratio,
@@ -451,9 +452,10 @@ def _process_input_target(
     args_for_scenario: argparse.Namespace,
     ffmpeg_path_for_scenario: Optional[str],
     logger_instance: logging.Logger,
+    detector_instance: Detector, # Aggiunto
     is_batch_from_original: bool,
     original_input_path_str: str,
-    test_output_dir_for_scenario: Path, # Directory dove salvare gli output di questo scenario specifico
+    test_output_dir_for_scenario: Path,
     scenario_name_suffix: str
     ):
     """Helper per processare un singolo input o un batch per uno scenario di test."""
@@ -488,7 +490,8 @@ def _process_input_target(
                 output_target_height=args_for_scenario.output_height,
                 interpolation_flag=interpolation_flag_cv2,
                 content_opacity=args_for_scenario.content_opacity,
-                object_weights_map=parsed_weights
+                object_weights_map=parsed_weights,
+                detector=detector_instance # Passa detector
             )
             # Gestione Muxing e file temp (come in main)
             if temp_video_file:
@@ -527,7 +530,8 @@ def _process_input_target(
             output_target_height=args_for_scenario.output_height,
             interpolation_flag=interpolation_flag_cv2,
             content_opacity=args_for_scenario.content_opacity,
-            object_weights_map=parsed_weights
+            object_weights_map=parsed_weights,
+            detector=detector_instance # Passa detector
         )
         # Gestione Muxing e file temp (come in main)
         if temp_video_file:
@@ -590,10 +594,85 @@ def run_test_suite(original_args: argparse.Namespace, base_ffmpeg_path: Optional
 
         # Log the effective arguments for this scenario
         # logger_instance.debug(f"Effective args for scenario '{scenario_name}': {vars(current_test_args)}")
+        try:
+            _process_input_target(
+                args_for_scenario=current_test_args,
+                ffmpeg_path_for_scenario=base_ffmpeg_path,
+                logger_instance=logger_instance,
+                is_batch_from_original=original_args.batch,
+                original_input_path_str=original_args.input,
+                test_output_dir_for_scenario=base_test_output_dir,
+                scenario_name_suffix=scenario_name
+            )
+        except Exception as e:
+            logger_instance.error(f"FATAL ERROR in test scenario '{scenario_name}': {e}", exc_info=True)
+            logger_instance.info(f"Continuing to next test scenario if any.")
 
-        _process_input_target(
-            args_for_scenario=current_test_args,
-            ffmpeg_path_for_scenario=base_ffmpeg_path,
+        logger_instance.info(f"--- Finished Test Scenario: {scenario_name} ---")
+
+    logger_instance.info("--- Test Suite Finished ---")
+
+
+# Modificato per accettare detector_instance
+def run_test_suite(original_args: argparse.Namespace, base_ffmpeg_path: Optional[str],
+                   logger_instance: logging.Logger, detector_instance: Detector): # Aggiunto detector_instance
+    logger_instance.info("--- Starting Test Suite ---")
+
+    # Determine base output directory for test files
+    if original_args.batch and os.path.isdir(original_args.output):
+        base_test_output_dir = Path(original_args.output) / "frameshift_test_outputs"
+    elif not original_args.batch and Path(original_args.output).name: # Check if it looks like a file path
+        base_test_output_dir = Path(original_args.output).parent / (Path(original_args.output).stem + "_test_outputs")
+    else: # Fallback or if original_args.output is a dir but not for batch
+        base_test_output_dir = Path("frameshift_test_outputs").resolve()
+
+    try:
+        base_test_output_dir.mkdir(parents=True, exist_ok=True)
+        logger_instance.info(f"Test outputs will be saved in: {base_test_output_dir}")
+    except OSError as e:
+        logger_instance.error(f"Could not create test output directory {base_test_output_dir}: {e}. Aborting test suite.", exc_info=True)
+        return
+
+    test_scenarios = [
+        {"name": "DefaultFill", "params": {"padding": False}},
+        {"name": "PadBlack", "params": {"padding": True, "padding_type": "black"}},
+        {"name": "PadBlur_Low", "params": {"padding": True, "padding_type": "blur", "blur_amount": 2}},
+        {"name": "PadBlur_High", "params": {"padding": True, "padding_type": "blur", "blur_amount": 8}},
+        # {"name": "PadColor_Red", "params": {"padding": True, "padding_type": "color", "padding_color_value": "red"}}, # Rimosso per ora per evitare dipendenza da parse_color_string in _process_input_target se non necessario
+        {"name": "Interpolation_Linear", "params": {"interpolation": "linear", "padding": False}},
+        {"name": "Interpolation_Cubic_PadBlack", "params": {"interpolation": "cubic", "padding": True, "padding_type": "black"}},
+        {"name": "OutputHeight_720p", "params": {"output_height": 720, "padding": False}},
+        {"name": "OutputHeight_1280p_PadBlur", "params": {"output_height": 1280, "padding": True, "padding_type": "blur"}},
+        {"name": "ObjWeights_FocusPerson", "params": {"object_weights": "person:1.0,face:0.2,default:0.1", "padding": False}},
+    ]
+
+    for scenario in test_scenarios:
+        scenario_name = scenario["name"]
+        scenario_params = scenario["params"]
+        logger_instance.info(f"--- Starting Test Scenario: {scenario_name} ---")
+
+        current_test_args = argparse.Namespace(**vars(original_args))
+        for key, value in scenario_params.items():
+            setattr(current_test_args, key, value)
+
+        try:
+            _process_input_target(
+                args_for_scenario=current_test_args,
+                ffmpeg_path_for_scenario=base_ffmpeg_path,
+                logger_instance=logger_instance,
+                detector_instance=detector_instance, # Passato qui
+                is_batch_from_original=original_args.batch,
+                original_input_path_str=original_args.input,
+                test_output_dir_for_scenario=base_test_output_dir,
+                scenario_name_suffix=scenario_name
+            )
+        except Exception as e:
+            logger_instance.error(f"FATAL ERROR in test scenario '{scenario_name}': {e}", exc_info=True)
+            logger_instance.info(f"Continuing to next test scenario if any.")
+
+        logger_instance.info(f"--- Finished Test Scenario: {scenario_name} ---")
+
+    logger_instance.info("--- Test Suite Finished ---")
             logger_instance=logger_instance,
             is_batch_from_original=original_args.batch,
             original_input_path_str=original_args.input, # This is str
@@ -701,8 +780,16 @@ def main() -> None:
     # else:
     #     logger.debug(f"Found ffmpeg at: {ffmpeg_path}")
 
+    # Initialize the Detector once
+    try:
+        detector_instance = Detector() # Passare eventuali config di confidenza se rese argomenti CLI
+    except Exception as e:
+        logger.critical(f"Failed to initialize Detector: {e}. Cannot proceed.", exc_info=True)
+        return # Esce se il detector non può essere inizializzato
+
     if args.test:
-        run_test_suite(original_args=args, base_ffmpeg_path=ffmpeg_path, logger_instance=logger)
+        run_test_suite(original_args=args, base_ffmpeg_path=ffmpeg_path,
+                       logger_instance=logger, detector_instance=detector_instance)
         return  # Termina dopo l'esecuzione della test suite
 
     # Logica di processamento normale (singolo file o batch)
