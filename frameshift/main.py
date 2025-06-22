@@ -416,7 +416,7 @@ def process_video(
         else: # apply_padding_flag is True, usa padding_type_str
             base_frame_for_padding: Optional[np.ndarray] = None
             if padding_type_str == 'blur':
-                kernel_size_for_padding_blur = map_blur_input_to_kernel(blur_intensity_0_10) # blur_intensity_0_10 è il nuovo nome di blur_amount_param
+                kernel_size_for_padding_blur = map_blur_input_to_kernel(blur_amount_param)
                 base_frame_for_padding = cv2.GaussianBlur(cv2.resize(frame, (out_w, out_h), interpolation=interpolation_flag), (kernel_size_for_padding_blur, kernel_size_for_padding_blur), 0)
             elif padding_type_str == 'color':
                 color_bgr = parse_color_to_bgr(padding_color_str)
@@ -551,68 +551,6 @@ def _process_input_target(
             logger_instance.error(f"Video processing (process_video call) failed for {original_input_file}, no temp file.")
 
 
-def run_test_suite(original_args: argparse.Namespace, base_ffmpeg_path: Optional[str], logger_instance: logging.Logger):
-    logger_instance.info("--- Starting Test Suite ---")
-
-    # Determine base output directory for test files
-    if original_args.batch and os.path.isdir(original_args.output):
-        base_test_output_dir = Path(original_args.output) / "frameshift_test_outputs"
-    elif not original_args.batch and Path(original_args.output).name: # Check if it looks like a file path
-        base_test_output_dir = Path(original_args.output).parent / (Path(original_args.output).stem + "_test_outputs")
-    else: # Fallback or if original_args.output is a dir but not for batch
-        base_test_output_dir = Path("frameshift_test_outputs").resolve()
-
-    try:
-        base_test_output_dir.mkdir(parents=True, exist_ok=True)
-        logger_instance.info(f"Test outputs will be saved in: {base_test_output_dir}")
-    except OSError as e:
-        logger_instance.error(f"Could not create test output directory {base_test_output_dir}: {e}. Aborting test suite.", exc_info=True)
-        return
-
-    test_scenarios = [
-        {"name": "DefaultFill", "params": {"padding": False}}, # Default behavior should be fill
-        {"name": "PadBlack", "params": {"padding": True, "padding_type": "black"}},
-        {"name": "PadBlur_Low", "params": {"padding": True, "padding_type": "blur", "blur_amount": 2}},
-        {"name": "PadBlur_High", "params": {"padding": True, "padding_type": "blur", "blur_amount": 8}},
-        {"name": "PadColor_Red", "params": {"padding": True, "padding_type": "color", "padding_color_value": "red"}},
-        {"name": "Interpolation_Linear", "params": {"interpolation": "linear", "padding": False}}, # Test fill with linear
-        {"name": "Interpolation_Cubic_PadBlack", "params": {"interpolation": "cubic", "padding": True, "padding_type": "black"}},
-        {"name": "OutputHeight_720p", "params": {"output_height": 720, "padding": False}},
-        {"name": "OutputHeight_1280p_PadBlur", "params": {"output_height": 1280, "padding": True, "padding_type": "blur"}},
-        {"name": "ObjWeights_FocusPerson", "params": {"object_weights": "person:1.0,face:0.2,default:0.1", "padding": False}},
-    ]
-
-    for scenario in test_scenarios:
-        scenario_name = scenario["name"]
-        scenario_params = scenario["params"]
-        logger_instance.info(f"--- Starting Test Scenario: {scenario_name} ---")
-
-        # Create a copy of original_args and update with scenario-specific params
-        current_test_args = argparse.Namespace(**vars(original_args))
-        for key, value in scenario_params.items():
-            setattr(current_test_args, key, value)
-
-        # Log the effective arguments for this scenario
-        # logger_instance.debug(f"Effective args for scenario '{scenario_name}': {vars(current_test_args)}")
-        try:
-            _process_input_target(
-                args_for_scenario=current_test_args,
-                ffmpeg_path_for_scenario=base_ffmpeg_path,
-                logger_instance=logger_instance,
-                is_batch_from_original=original_args.batch,
-                original_input_path_str=original_args.input,
-                test_output_dir_for_scenario=base_test_output_dir,
-                scenario_name_suffix=scenario_name
-            )
-        except Exception as e:
-            logger_instance.error(f"FATAL ERROR in test scenario '{scenario_name}': {e}", exc_info=True)
-            logger_instance.info(f"Continuing to next test scenario if any.")
-
-        logger_instance.info(f"--- Finished Test Scenario: {scenario_name} ---")
-
-    logger_instance.info("--- Test Suite Finished ---")
-
-
 # Modificato per accettare detector_instance
 def run_test_suite(original_args: argparse.Namespace, base_ffmpeg_path: Optional[str],
                    logger_instance: logging.Logger, detector_instance: Detector): # Aggiunto detector_instance
@@ -671,16 +609,6 @@ def run_test_suite(original_args: argparse.Namespace, base_ffmpeg_path: Optional
             logger_instance.info(f"Continuing to next test scenario if any.")
 
         logger_instance.info(f"--- Finished Test Scenario: {scenario_name} ---")
-
-    logger_instance.info("--- Test Suite Finished ---")
-            logger_instance=logger_instance,
-            is_batch_from_original=original_args.batch,
-            original_input_path_str=original_args.input, # This is str
-            test_output_dir_for_scenario=base_test_output_dir,
-            scenario_name_suffix=scenario_name
-        )
-        logger_instance.info(f"--- Finished Test Scenario: {scenario_name} ---")
-
     logger_instance.info("--- Test Suite Finished ---")
 
 
@@ -688,7 +616,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="FrameShift auto reframing tool (stationary mode only).")
     # Gli argomenti verranno parsati prima, poi si configura il logging.
     # Questo è un placeholder per l'ordine, la configurazione effettiva avverrà dopo args = parser.parse_args()
-
     # Check for ffmpeg dependency first (verrà spostato dopo il setup del logger per usare logger.warning)
     # ffmpeg_path = shutil.which('ffmpeg')
     # if not ffmpeg_path:
@@ -814,7 +741,8 @@ def main() -> None:
                                             blur_amount_param=args.blur_amount,
                                             output_target_height=args.output_height,
                                             interpolation_flag=interpolation_flag_cv2, # Aggiunto
-                                            content_opacity=args.content_opacity,
+ content_opacity=args.content_opacity,
+ detector=detector_instance, # Pass the detector instance
                                             object_weights_map=parsed_weights)
 
             if temp_video_file:
@@ -855,7 +783,7 @@ def main() -> None:
                                         blur_amount_param=args.blur_amount,
                                         output_target_height=args.output_height,
                                         interpolation_flag=interpolation_flag_cv2, # Aggiunto
-                                        content_opacity=args.content_opacity,
+                                            content_opacity=args.content_opacity,
                                         object_weights_map=parsed_weights)
 
         if temp_video_file:
