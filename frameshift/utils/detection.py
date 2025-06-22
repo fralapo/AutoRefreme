@@ -22,7 +22,7 @@ class Detector:
     """
 
     def __init__(self, yolo_face_conf: float = 0.3, yolo_obj_conf: float = 0.25, mp_face_conf: float = 0.5):
- self.yolo_face_conf = yolo_face_conf
+        self.yolo_face_conf = yolo_face_conf
         self.yolo_obj_conf = yolo_obj_conf
         self.mp_face_conf = mp_face_conf
 
