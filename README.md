@@ -78,8 +78,13 @@ FrameShift intelligently reframes videos using a **stationary (fixed) crop per s
 
 1.  **Scene Detection:** Divides the video into scenes using PySceneDetect.
 2.  **Content Analysis:**
-    *   **Faces:** The script attempts to load a specialized YOLO model for face detection, `yolov11n-face.pt` (expected to be available locally where the script or YOLO can find it, e.g., current working directory). If this model is not found or fails to load, MediaPipe's face detection is used as a fallback.
-    *   **Other Objects:** Detected using the general-purpose YOLOv8n model (which Ultralytics downloads automatically if not present). This object detection step is performed *only if* you specify weights for object classes other than 'face' (and 'default') with a weight greater than 0 in the `--object_weights` argument. This optimizes performance when only face-centric reframing is needed.
+    Both detection models (`yolo11n.pt` and `yolov11n-face.pt`) are automatically downloaded to a local `models/` subdirectory if not found during the first run.
+    *   **Faces:** Detected using a specialized model, `yolov11n-face.pt`.
+        *   This model is trained to detect one primary class: `{0: 'face'}`.
+        *   If this model fails to load or operate, MediaPipe's face detection is used as a fallback.
+    *   **Other Objects:** Detected using the general-purpose `yolo11n.pt` model.
+        *   This model can identify a wide range of objects from the COCO dataset. Common detectable classes include: `person`, `bicycle`, `car`, `motorcycle`, `airplane`, `bus`, `train`, `truck`, `boat`, `traffic light`, `fire hydrant`, `stop sign`, `parking meter`, `bench`, `bird`, `cat`, `dog`, `horse`, `sheep`, `cow`, `elephant`, `bear`, `zebra`, `giraffe`, `backpack`, `umbrella`, `handbag`, `tie`, `suitcase`, `frisbee`, `skis`, `snowboard`, `sports ball`, `kite`, `baseball bat`, `baseball glove`, `skateboard`, `surfboard`, `tennis racket`, `bottle`, `wine glass`, `cup`, `fork`, `knife`, `spoon`, `bowl`, `banana`, `apple`, `sandwich`, `orange`, `broccoli`, `carrot`, `hot dog`, `pizza`, `donut`, `cake`, `chair`, `couch`, `potted plant`, `bed`, `dining table`, `toilet`, `tv`, `laptop`, `mouse`, `remote`, `keyboard`, `cell phone`, `microwave`, `oven`, `toaster`, `sink`, `refrigerator`, `book`, `clock`, `vase`, `scissors`, `teddy bear`, `hair drier`, `toothbrush`. (This is not an exhaustive list, but covers the 80 standard COCO classes).
+        *   This object detection step is performed *only if* you specify weights for object classes (other than 'face' and 'default') with a weight greater than 0 in the `--object_weights` argument. This optimizes performance when only face-centric reframing is needed.
     *   The importance of all detected elements in guiding the crop is determined by the `--object_weights` argument.
 3.  **Optimal Stationary Crop:** For each scene, calculates a fixed crop window that best frames the weighted area of interest at the target aspect ratio.
 4.  **Output Generation (Cropping/Padding):**
@@ -116,9 +121,9 @@ Enhancements could include automatic selection of reframing strategies (like dyn
     *   `nearest` is the fastest but produces blocky results, usually not recommended for video.
 *   `--content_opacity O`: (Default: `1.0`) Opacity of the main video content (0.0-1.0). If < 1.0, the content (including any padding) is blended with a blurred version of the full original frame.
 *   `--object_weights "label:w,..."`: (Default: `"face:1.0,person:0.8,default:0.5"`) Comma-separated `label:weight` pairs.
-    *   Assigns importance weights to detected elements. The label `'face'` refers to faces detected by the specialized YOLOv8-Face model (or MediaPipe fallback). Other labels (e.g., `'person'`, `'car'`, `'dog'`) correspond to objects detected by YOLOv8n.
-    *   YOLOv8n object detection is only run if weights are specified for labels other than `'face'` and `'default'` with a weight > 0.
-    *   Example: `"--object_weights \"face:1.0,dog:0.7,default:0.2\""` (this would trigger YOLOv8n to look for dogs). If only `\"face:1.0,default:0.1\"` is given, YOLOv8n for general objects might not run if not explicitly needed.
+    *   Assigns importance weights to detected elements. The label `'face'` refers to faces detected by `yolov11n-face.pt` (or MediaPipe fallback). Other labels (e.g., `'person'`, `'car'`, `'dog'`, see list under "Content Analysis") correspond to objects detected by `yolo11n.pt`.
+    *   Detection of these other objects with `yolo11n.pt` is only run if weights are specified for their labels with a weight > 0.
+    *   Example: `"--object_weights \"face:1.0,dog:0.7,default:0.2\""` (this would trigger `yolo11n.pt` to look for dogs).
 *   `--log_file FILE_PATH`: (Optional) Path to a file where verbose (DEBUG level) logs will be written. If not specified, logs (INFO level and above for FrameShift's own messages, plus any output from underlying libraries) are printed to the console.
 *   `--test`: (Flag, default: `False`) Run in test mode. This will execute a predefined suite of scenarios based on the provided `input`, `output`, and `ratio` arguments, varying other parameters like padding, interpolation, etc. Test outputs are saved to a subdirectory (e.g., `*_test_outputs/`) relative to the specified output path. A detailed log of the test suite is also generated (e.g., `*_test_suite.log`).
 *   `--batch`: (Flag) Process all videos in the input directory.
