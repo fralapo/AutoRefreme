@@ -11,7 +11,7 @@ With this GUI, you can access the powerful reframing features of FrameShift with
 **If running from source code:**
 
 * **Python:** Version 3.8 or later.
-* **FrameShift Dependencies:** All Python libraries listed in the `requirements.txt` file of the FrameShift project must be installed (e.g., `opencv-python`, `mediapipe`, `ultralytics`, `scenedetect`, `numpy`, `tqdm`). You can install them with:
+* **FrameShift Dependencies:** All Python libraries listed in the `requirements.txt` file of the FrameShift project must be installed. You can install them with:
     ```bash
     pip install -r requirements.txt
     ```
