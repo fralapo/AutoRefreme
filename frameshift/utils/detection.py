@@ -1,10 +1,13 @@
 """Utilities for face and object detection."""
 from typing import List, Tuple, Dict, Any, Set
 import cv2
+from pathlib import Path
+import requests
 import numpy as np
 import mediapipe as mp
 from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
+from urllib.parse import urlparse
 import logging
 
 logger = logging.getLogger('frameshift.utils.detection')
@@ -19,55 +22,68 @@ class Detector:
     """
 
     def __init__(self, yolo_face_conf: float = 0.3, yolo_obj_conf: float = 0.25, mp_face_conf: float = 0.5):
-        self.yolo_face_conf = yolo_face_conf
+ self.yolo_face_conf = yolo_face_conf
         self.yolo_obj_conf = yolo_obj_conf
         self.mp_face_conf = mp_face_conf
 
         # Load general object detection model (YOLOv8n) - Ultralytics handles download
         try:
-            self.obj_model = YOLO("yolov8n.pt")
-            logger.info("Successfully loaded/initialized YOLOv8n for general object detection.")
+            self.obj_model = YOLO("yolo11n.pt")
+            logger.info("Successfully loaded/initialized yolo11n.pt for general object detection.")
         except Exception as e:
-            logger.error(f"Could not load YOLOv8n object model: {e}", exc_info=True)
+            logger.error(f"""Could not load general object model ("yolo11n.pt"): {e}. If this is the first time running
+                         with yolo11n.pt, ensure you have an internet connection for download. If issues persist,
+                         consider trying with \"yolov8n.pt\" instead.""", exc_info=True)
+
             self.obj_model = None
+
 
         # Attempt to load specialized YOLO face detection model (yolov11n-face.pt)
         self.yolo_face_model = None
         self.mp_face_model = None
 
         face_model_filename = "yolov11n-face.pt"
-        # Corretto il nome del file come da tua ultima indicazione.
-        # Questo URL è un asset diretto, attempt_download_asset è più per i release di ultralytics.
-        # Per un URL diretto, potremmo usare un'altra utility o hf_hub_download se il modello fosse su HF.
-        # Per ora, assumiamo che attempt_download_asset possa prendere un URL completo o che il file
-        # sia gestito in modo simile a yolov8n.pt (cioè, specificando solo il nome se è un modello noto a ultralytics).
-        # Se "yolov11n-face.pt" non è un asset che YOLO() o attempt_download_asset conosce,
-        # dobbiamo implementare un download manuale o chiedere all'utente di scaricarlo.
-        # Tentativo con attempt_download_asset per un file specifico da un URL:
-        # Questo richiede che il file sia un asset di un release di GitHub formattato come ultralytics si aspetta.
-        # La via più semplice è se l'utente mette "yolov11n-face.pt" nella stessa directory o in un percorso noto.
-        # Per ora, proviamo a caricarlo direttamente, assumendo che sia scaricato o nello CWD/PATH.
-        # Se il file non è un formato che YOLO("path/to/model.pt") può caricare direttamente, fallirà.
-        # YOLOv11 potrebbe non essere direttamente compatibile con la classe YOLO di ultralytics v8.
-        # Prioritizziamo il caricamento locale e poi il fallback.
+        # Define the URL for the face model on GitHub
+        face_model_url = "https://github.com/akanametov/yolo-face/releases/download/v0.0.0/yolov11n-face.pt"
 
-        # Tentativo 1: Caricare direttamente il file se l'utente l'ha messo nel CWD o in un path rilevabile da YOLO
-        try:
-            logger.info(f"Attempting to load local '{face_model_filename}'...")
-            self.yolo_face_model = YOLO(face_model_filename)
-            logger.info(f"Successfully loaded '{face_model_filename}'.")
-        except Exception as e_local:
-            logger.warning(f"Could not load local '{face_model_filename}': {e_local}. Attempting download if known or fallback.")
-            self.yolo_face_model = None # Assicura che sia None se il caricamento locale fallisce
+        # Determine the local path where the model should be stored
+        # Let's use a 'weights' subdirectory in the current working directory
+        download_dir = Path("weights")
+        download_dir.mkdir(parents=True, exist_ok=True) # Ensure the directory exists
+        local_model_path = download_dir / face_model_filename
 
-        # Se il caricamento locale fallisce, e se avessimo un meccanismo di download automatico per questo specifico file,
-        # lo inseriremmo qui. Dato che attempt_download_asset di ultralytics è per i loro asset,
-        # e hf_hub_download era per il modello precedente, per questo URL specifico di GitHub
-        # dovremmo implementare un download custom o richiedere all'utente di farlo.
-        # Per semplicità, per ora, se il caricamento locale fallisce, passiamo al fallback.
+        # Check if the file exists locally
+        if not local_model_path.is_file():
+            logger.info(f"'{face_model_filename}' not found locally at {local_model_path}. Attempting to download from {face_model_url}...")
+            try:
+                # Download the file from the URL using requests
+                import requests
+                response = requests.get(face_model_url, stream=True)
+                response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+                with open(local_model_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                logger.info(f"Successfully downloaded '{face_model_filename}' to {local_model_path}")
 
+            except Exception as e_download:
+                logger.warning(f"Could not download '{face_model_filename}' from {face_model_url}: {e_download}")
+                local_model_path = None # Set to None if download fails
+
+        # Attempt to load the YOLO face model from the local path (if determined and exists)
+        if local_model_path and local_model_path.is_file():
+            try:
+                logger.info(f"Attempting to load YOLO face model from {local_model_path}...")
+                # Use str() to ensure compatibility with YOLO() which might expect a string path
+                self.yolo_face_model = YOLO(str(local_model_path))
+                logger.info(f"Successfully loaded YOLO face model from {local_model_path}.")
+            except Exception as e_load:
+                logger.warning(f"Could not load YOLO face model from {local_model_path}: {e_load}")
+                self.yolo_face_model = None # Ensure model is None if loading fails
+
+
+        # If self.yolo_face_model is still None after attempts, fallback to MediaPipe
         if self.yolo_face_model is None:
-            logger.warning(f"'{face_model_filename}' not found or failed to load. Falling back to MediaPipe for face detection.")
+            logger.warning(f"YOLO face model not loaded. Falling back to MediaPipe for face detection.")
             try:
                 self.mp_face_model = mp.solutions.face_detection.FaceDetection(
                     model_selection=1, min_detection_confidence=self.mp_face_conf
@@ -76,6 +92,7 @@ class Detector:
             except Exception as e_mp:
                 logger.error(f"Could not initialize MediaPipe Face Detection: {e_mp}", exc_info=True)
                 self.mp_face_model = None
+
 
 
     def detect(self, frame: np.ndarray, active_object_labels: Set[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
