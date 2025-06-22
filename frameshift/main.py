@@ -1,11 +1,14 @@
 """Command-line interface for FrameShift."""
 import argparse
 from pathlib import Path
-from typing import Dict, Tuple, List, Any, Optional # Added Optional
+from typing import Dict, Tuple, List, Any, Optional
 import cv2
 import numpy as np
 from tqdm import tqdm
-from collections import deque # Added deque
+from collections import deque
+import subprocess # Added for ffmpeg
+import shutil # Added for shutil.which
+import os # Added for os.remove and os.replace
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
 
@@ -55,6 +58,56 @@ def parse_color_to_bgr(color_input: str) -> Tuple[int, int, int]:
     if color_input != "black": # Avoid double warning if default 'black' fails (should not happen with predefined)
         print(f"Warning: Color '{color_input}' not recognized or invalid format. Defaulting to black.")
     return (0, 0, 0) # Default to black
+
+
+# FFmpeg Muxing Function
+def mux_video_audio_with_ffmpeg(
+    original_video_path: str,
+    processed_video_path: str, # Video senza audio
+    final_output_path: str,
+    ffmpeg_exec_path: str # Percorso all'eseguibile di ffmpeg
+) -> bool:
+    """
+    Combina il video processato (senza audio) con l'audio del video originale
+    usando FFmpeg, salvando il risultato nel final_output_path.
+    Restituisce True in caso di successo, False altrimenti.
+    """
+    cmd = [
+        ffmpeg_exec_path,
+        '-y',
+        '-i', processed_video_path,
+        '-i', original_video_path,
+        '-c:v', 'copy',
+        '-c:a', 'aac', # Usiamo aac standard, -strict experimental potrebbe non essere necessario per versioni recenti
+        # '-strict', 'experimental', # Rimosso per ora, può essere aggiunto se aac standard fallisce
+        '-map', '0:v:0',
+        '-map', '1:a:0?',
+        '-shortest',
+        final_output_path
+    ]
+
+    # print(f"DEBUG: Esecuzione comando FFmpeg: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+
+        if result.returncode == 0:
+            # print(f"DEBUG: FFmpeg muxing completato con successo per {final_output_path}")
+            return True
+        else:
+            print(f"ERRORE: FFmpeg ha fallito per {final_output_path} (exit code {result.returncode}).")
+            # Limitare la stampa di stdout/stderr se sono molto lunghi
+            print(f"FFmpeg stdout (prime 500 chars):\n{result.stdout[:500]}")
+            print(f"FFmpeg stderr (prime 500 chars):\n{result.stderr[:500]}")
+            return False
+    except FileNotFoundError:
+        # Questo errore dovrebbe essere già stato catturato dal check iniziale in main()
+        print(f"ERRORE: Eseguibile FFmpeg non trovato a '{ffmpeg_exec_path}'. Impossibile processare l'audio.")
+        return False
+    except Exception as e:
+        print(f"ERRORE: Eccezione durante l'esecuzione di FFmpeg: {e}")
+        if hasattr(e, 'stdout') and e.stdout: print(f"FFmpeg stdout (eccezione):\n{e.stdout.decode(errors='ignore')[:500]}")
+        if hasattr(e, 'stderr') and e.stderr: print(f"FFmpeg stderr (eccezione):\n{e.stderr.decode(errors='ignore')[:500]}")
+        return False
 
 
 def sample_crop(video_path: str, start_frame_num: int, end_frame_num: int, detector: Detector,
@@ -123,10 +176,10 @@ def process_video(
     apply_padding_flag: bool,
     padding_type_str: str,
     padding_color_str: str,
-    blur_amount_param: int, # Interpreted based on context (0-10 for padding, kernel for opacity bg)
+    blur_amount_param: int,
     content_opacity: float = 1.0,
     object_weights_map: Dict[str, float] = None,
-) -> None:
+) -> Optional[str]: # Restituisce il percorso del video temporaneo o None
     if object_weights_map is None:
         object_weights_map = {'face': 1.0, 'person': 0.8, 'default': 0.5}
     # La modalità è implicitamente 'stationary'
@@ -209,8 +262,19 @@ def process_video(
         out_w = width
         out_h = int(out_w / aspect_ratio)
 
+    # Crea un nome per il file video temporaneo (senza audio)
+    # output_path è il percorso finale desiderato, lo usiamo per generare un nome temp
+    temp_video_path = Path(output_path).parent / f"{Path(output_path).stem}_temp_video.mp4"
+
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps, (out_w, out_h))
+    out = cv2.VideoWriter(str(temp_video_path), fourcc, fps, (out_w, out_h))
+
+    if not out.isOpened():
+        print(f"ERROR: Could not open video writer for temporary file: {temp_video_path}")
+        cap.release()
+        return None
+
+    # print(f"DEBUG: Writing temporary video to: {temp_video_path}")
 
     frame_idx = 0
     # prev_box è usato dalla modalità stationary per memorizzare il box fisso della scena.
@@ -348,10 +412,21 @@ def process_video(
     pbar.close()
     cap.release()
     out.release()
+    # print(f"DEBUG: Finished writing temporary video: {temp_video_path}")
+    return str(temp_video_path)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="FrameShift auto reframing tool (stationary mode only).")
+
+    # Check for ffmpeg dependency first
+    ffmpeg_path = shutil.which('ffmpeg')
+    if not ffmpeg_path:
+        print("WARNING: ffmpeg not found in PATH. Audio will not be processed or included in the output video.")
+        print("         Please install FFmpeg and ensure it's in your system's PATH for audio support.")
+    # else:
+        # print(f"DEBUG: Found ffmpeg at: {ffmpeg_path}")
+
     parser.add_argument("input", help="Input file or directory")
     parser.add_argument("output", help="Output file or directory")
     parser.add_argument("--ratio", default="9/16", help="Target aspect ratio (e.g., 9/16)")
@@ -393,22 +468,79 @@ def main() -> None:
             if vid.suffix.lower() not in {".mp4", ".mov", ".mkv", ".avi"}:
                 continue
             out_path = out_dir / f"{vid.stem}_reframed.mp4"
-            process_video(str(vid), str(out_path), args.ratio,
-                          apply_padding_flag=args.padding,
-                          padding_type_str=args.padding_type,
-                          padding_color_str=args.padding_color_value,
-                          blur_amount_param=args.blur_amount,
-                          content_opacity=args.content_opacity,
-                          object_weights_map=parsed_weights)
-    else:
+            # Il percorso originale del video di input è str(vid)
+            # Il percorso finale desiderato è out_path
+            temp_video_file = process_video(str(vid), str(out_path), args.ratio,
+                                            apply_padding_flag=args.padding,
+                                            padding_type_str=args.padding_type,
+                                            padding_color_str=args.padding_color_value,
+                                            blur_amount_param=args.blur_amount,
+                                            content_opacity=args.content_opacity,
+                                            object_weights_map=parsed_weights)
+
+            if temp_video_file:
+                if ffmpeg_path:
+                    # print(f"DEBUG: Attempting to mux audio for {out_path} using {temp_video_file}")
+                    success = mux_video_audio_with_ffmpeg(str(vid), temp_video_file, str(out_path), ffmpeg_path)
+                    if success:
+                        try:
+                            os.remove(temp_video_file)
+                            # print(f"DEBUG: Removed temporary video file: {temp_video_file}")
+                        except OSError as e:
+                            print(f"Warning: Could not remove temporary video file {temp_video_file}: {e}")
+                    else:
+                        print(f"Warning: FFmpeg muxing failed for {str(out_path)}. Outputting video without audio.")
+                        try:
+                            # Rinomina il file temporaneo (senza audio) al nome di output finale
+                            shutil.move(temp_video_file, str(out_path)) # shutil.move sovrascrive
+                            print(f"Info: Video (no audio) saved to {str(out_path)}")
+                        except OSError as e:
+                            print(f"ERRORE: Could not rename temp video {temp_video_file} to {str(out_path)}: {e}")
+                else: # ffmpeg non disponibile
+                    # print(f"DEBUG: FFmpeg not available. Renaming {temp_video_file} to {str(out_path)}")
+                    try:
+                        shutil.move(temp_video_file, str(out_path))
+                    except OSError as e:
+                         print(f"ERRORE: Could not rename temp video {temp_video_file} to {str(out_path)}: {e}")
+            else:
+                print(f"ERROR: Video processing failed for {str(vid)}, no temporary file created.")
+
+    else: # Single file mode
         parsed_weights = parse_object_weights(args.object_weights)
-        process_video(args.input, args.output, args.ratio,
-                      apply_padding_flag=args.padding,
-                      padding_type_str=args.padding_type,
-                      padding_color_str=args.padding_color_value,
-                      blur_amount_param=args.blur_amount,
-                      content_opacity=args.content_opacity,
-                      object_weights_map=parsed_weights)
+        # args.input è il video originale, args.output è il file finale desiderato
+        temp_video_file = process_video(args.input, args.output, args.ratio,
+                                        apply_padding_flag=args.padding,
+                                        padding_type_str=args.padding_type,
+                                        padding_color_str=args.padding_color_value,
+                                        blur_amount_param=args.blur_amount,
+                                        content_opacity=args.content_opacity,
+                                        object_weights_map=parsed_weights)
+
+        if temp_video_file:
+            if ffmpeg_path:
+                # print(f"DEBUG: Attempting to mux audio for {args.output} using {temp_video_file}")
+                success = mux_video_audio_with_ffmpeg(args.input, temp_video_file, args.output, ffmpeg_path)
+                if success:
+                    try:
+                        os.remove(temp_video_file)
+                        # print(f"DEBUG: Removed temporary video file: {temp_video_file}")
+                    except OSError as e:
+                        print(f"Warning: Could not remove temporary video file {temp_video_file}: {e}")
+                else:
+                    print(f"Warning: FFmpeg muxing failed for {args.output}. Outputting video without audio.")
+                    try:
+                        shutil.move(temp_video_file, args.output)
+                        print(f"Info: Video (no audio) saved to {args.output}")
+                    except OSError as e:
+                         print(f"ERRORE: Could not rename temp video {temp_video_file} to {args.output}: {e}")
+            else: # ffmpeg non disponibile
+                # print(f"DEBUG: FFmpeg not available. Renaming {temp_video_file} to {args.output}")
+                try:
+                    shutil.move(temp_video_file, args.output)
+                except OSError as e:
+                    print(f"ERRORE: Could not rename temp video {temp_video_file} to {args.output}: {e}")
+        else:
+            print(f"ERROR: Video processing failed for {args.input}, no temporary file created.")
 
 
 if __name__ == "__main__":
