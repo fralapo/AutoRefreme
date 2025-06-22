@@ -65,6 +65,13 @@ FrameShift automatically reframes videos, using a stationary (fixed) crop for ea
    python -m frameshift.main my_video_folder/ output_folder/ --ratio 4:5 --batch
    ```
 
+**6. Running the Test Suite:**
+   To run a predefined suite of tests using `my_video.mp4` as input, saving test outputs relative to `test_run_output.mp4`, and generating a detailed log:
+   ```bash
+   python -m frameshift.main my_video.mp4 test_run_output.mp4 --ratio 16:9 --test
+   ```
+   *(Check `test_run_output_test_outputs/` directory and `test_run_output_test_suite.log` or similar for results.)*
+
 ## How FrameShift Works (Inspired by Google AutoFlip)
 
 FrameShift intelligently reframes videos using a **stationary (fixed) crop per scene** approach:
@@ -113,6 +120,7 @@ Enhancements could include automatic selection of reframing strategies (like dyn
     *   YOLOv8n object detection is only run if weights are specified for labels other than `'face'` and `'default'` with a weight > 0.
     *   Example: `"--object_weights \"face:1.0,dog:0.7,default:0.2\""` (this would trigger YOLOv8n to look for dogs). If only `\"face:1.0,default:0.1\"` is given, YOLOv8n for general objects might not run if not explicitly needed.
 *   `--log_file FILE_PATH`: (Optional) Path to a file where verbose (DEBUG level) logs will be written. If not specified, logs (INFO level and above for FrameShift's own messages, plus any output from underlying libraries) are printed to the console.
+*   `--test`: (Flag, default: `False`) Run in test mode. This will execute a predefined suite of scenarios based on the provided `input`, `output`, and `ratio` arguments, varying other parameters like padding, interpolation, etc. Test outputs are saved to a subdirectory (e.g., `*_test_outputs/`) relative to the specified output path. A detailed log of the test suite is also generated (e.g., `*_test_suite.log`).
 *   `--batch`: (Flag) Process all videos in the input directory.
 
 The cropping logic determines an optimal stationary (fixed) crop for each scene, prioritizing important content based on `--object_weights`. How this crop is presented in the final output (filled, or with padding) is controlled by `--padding` and its related arguments.
