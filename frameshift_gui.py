@@ -197,7 +197,7 @@ class FrameShiftGUI:
                 self.log_message(f"Errore inizializzazione Detector: {e}", "ERROR")
                 messagebox.showerror("Errore Detector", f"Impossibile inizializzare il detector: {e}\nFrameShift potrebbe non funzionare correttamente.")
 
-    self._apply_tooltips()
+        self._apply_tooltips() # Corretta indentazione
 
 
     def _apply_tooltips(self):

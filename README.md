@@ -130,6 +130,18 @@ Enhancements could include automatic selection of reframing strategies (like dyn
 
 The cropping logic determines an optimal stationary (fixed) crop for each scene, prioritizing important content based on `--object_weights`. How this crop is presented in the final output (filled, or with padding) is controlled by `--padding` and its related arguments.
 
+## Graphical User Interface (GUI)
+
+For users who prefer a graphical interface over the command line, FrameShift now includes a GUI.
+
+*   **To Run:**
+    ```bash
+    python frameshift_gui.py
+    ```
+    (Ensure you are in the project's root directory and have installed all dependencies from `requirements.txt`).
+*   **Features:** The GUI provides access to most of FrameShift's command-line functionalities, including input/output selection, aspect ratio, padding options, object weights, and more, all through an intuitive interface.
+*   **Documentation:** For detailed instructions on using the GUI, please refer to the [FrameShift GUI User Manual](FRAMESHIFT_GUI_MANUAL.md).
+
 ## License
 
 FrameShift is released under the MIT License.
