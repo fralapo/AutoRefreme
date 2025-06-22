@@ -33,7 +33,7 @@ class Detector:
         # Load general object detection model (yolo11n.pt)
         self.obj_model = None
         obj_model_filename = "yolo11n.pt"
-        obj_model_url = "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolo11n.pt" # Standard Ultralytics assets URL
+        obj_model_url = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt" # Corrected Ultralytics assets URL
         local_obj_model_path = model_dir / obj_model_filename
 
         if not local_obj_model_path.is_file():
