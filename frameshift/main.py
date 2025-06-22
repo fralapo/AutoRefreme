@@ -653,22 +653,10 @@ def main() -> None:
     parser.add_argument("--log_file", type=str, default=None, help="Path to a file where verbose logs will be written. If not specified, logs primarily go to console.")
     parser.add_argument("--test", action="store_true", default=False, help="Run in test mode. Uses other provided arguments (input, output, ratio) as a base to generate and run multiple test scenarios with varied settings, logging results extensively.")
     parser.add_argument("--batch", action="store_true", help="Process all videos in input directory")
-    parser.add_argument("--gui", action="store_true", help="Launch the FrameShift Graphical User Interface")
 
     args = parser.parse_args()
 
-    if args.gui:
-        try:
-            from . import gui
-            gui.start_gui()
-        except ImportError as e:
-            print(f"Error: Could not import GUI module. {e}")
-            print("Please ensure tkinter is installed and the gui.py file is correctly placed.")
-        except Exception as e:
-            print(f"An unexpected error occurred while launching the GUI: {e}")
-        return # Exit after launching or attempting to launch GUI
-
-    # Configure logging (only if not launching GUI)
+    # Configure logging
     logger = logging.getLogger('frameshift')
     logger.setLevel(logging.DEBUG)  # Capture all debug messages and above
 

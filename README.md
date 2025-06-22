@@ -72,13 +72,6 @@ FrameShift automatically reframes videos, using a stationary (fixed) crop for ea
    ```
    *(Check `test_run_output_test_outputs/` directory and `test_run_output_test_suite.log` or similar for results. If an error occurs in one test scenario, the suite will log it and continue to the next.)*
 
-**7. Launching the Graphical User Interface (GUI):**
-   FrameShift also offers a GUI for easier interaction with its features.
-   ```bash
-   python -m frameshift.main --gui
-   ```
-   This will open a window allowing you to select video files or folders, adjust all processing parameters (aspect ratio, padding, object weights, etc.), preview the equivalent command-line, and start the reframing process.
-
 ## How FrameShift Works (Inspired by Google AutoFlip)
 
 FrameShift intelligently reframes videos using a **stationary (fixed) crop per scene** approach:
@@ -134,7 +127,6 @@ Enhancements could include automatic selection of reframing strategies (like dyn
 *   `--log_file FILE_PATH`: (Optional) Path to a file where verbose (DEBUG level) logs will be written. If not specified, logs (INFO level and above for FrameShift's own messages, plus any output from underlying libraries) are printed to the console.
 *   `--test`: (Flag, default: `False`) Run in test mode. This will execute a predefined suite of scenarios based on the provided `input`, `output`, and `ratio` arguments, varying other parameters like padding, interpolation, etc. Test outputs are saved to a subdirectory (e.g., `*_test_outputs/`) relative to the specified output path. A detailed log of the test suite is also generated (e.g., `*_test_suite.log`).
 *   `--batch`: (Flag) Process all videos in the input directory.
-*   `--gui`: (Flag) Launch the FrameShift Graphical User Interface. This provides a user-friendly way to access all the functionalities described above.
 
 The cropping logic determines an optimal stationary (fixed) crop for each scene, prioritizing important content based on `--object_weights`. How this crop is presented in the final output (filled, or with padding) is controlled by `--padding` and its related arguments.
 
