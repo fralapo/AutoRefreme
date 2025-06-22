@@ -26,16 +26,38 @@ class Detector:
         self.yolo_obj_conf = yolo_obj_conf
         self.mp_face_conf = mp_face_conf
 
-        # Load general object detection model (YOLOv8n) - Ultralytics handles download
-        try:
-            self.obj_model = YOLO("yolo11n.pt")
-            logger.info("Successfully loaded/initialized yolo11n.pt for general object detection.")
-        except Exception as e:
-            logger.error(f"""Could not load general object model ("yolo11n.pt"): {e}. If this is the first time running
-                         with yolo11n.pt, ensure you have an internet connection for download. If issues persist,
-                         please check the model path and file integrity.""", exc_info=True)
+        # Define model directory
+        model_dir = Path("models")
+        model_dir.mkdir(parents=True, exist_ok=True)
 
-            self.obj_model = None
+        # Load general object detection model (yolo11n.pt)
+        self.obj_model = None
+        obj_model_filename = "yolo11n.pt"
+        obj_model_url = "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolo11n.pt" # Standard Ultralytics assets URL
+        local_obj_model_path = model_dir / obj_model_filename
+
+        if not local_obj_model_path.is_file():
+            logger.info(f"'{obj_model_filename}' not found locally at {local_obj_model_path}. Attempting to download from {obj_model_url}...")
+            try:
+                response = requests.get(obj_model_url, stream=True)
+                response.raise_for_status()
+                with open(local_obj_model_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                logger.info(f"Successfully downloaded '{obj_model_filename}' to {local_obj_model_path}")
+            except Exception as e_download_obj:
+                logger.error(f"Could not download '{obj_model_filename}' from {obj_model_url}: {e_download_obj}. Object detection might not work.", exc_info=True)
+                # self.obj_model remains None
+
+        if local_obj_model_path.is_file() and self.obj_model is None: # Attempt to load if downloaded or already exists
+            try:
+                self.obj_model = YOLO(str(local_obj_model_path))
+                logger.info(f"Successfully loaded general object model from {local_obj_model_path}.")
+            except Exception as e_load_obj:
+                logger.error(f"Could not load general object model from {local_obj_model_path}: {e_load_obj}. Object detection might not work.", exc_info=True)
+                self.obj_model = None # Ensure it's None if loading fails
+        elif not local_obj_model_path.is_file():
+            logger.error(f"General object model '{obj_model_filename}' not found at {local_obj_model_path} and download failed or was not attempted. Object detection will be unavailable.")
 
 
         # Attempt to load specialized YOLO face detection model (yolov11n-face.pt)
@@ -46,39 +68,40 @@ class Detector:
         # Define the URL for the face model on GitHub
         face_model_url = "https://github.com/akanametov/yolo-face/releases/download/v0.0.0/yolov11n-face.pt"
 
-        # Determine the local path where the model should be stored
-        # Let's use a 'weights' subdirectory in the current working directory
-        download_dir = Path("weights")
-        download_dir.mkdir(parents=True, exist_ok=True) # Ensure the directory exists
-        local_model_path = download_dir / face_model_filename
+        # Determine the local path where the model should be stored (now using model_dir)
+        # model_dir is already defined and created above: Path("models")
+        local_face_model_path = model_dir / face_model_filename # Changed from local_model_path
 
         # Check if the file exists locally
-        if not local_model_path.is_file():
-            logger.info(f"'{face_model_filename}' not found locally at {local_model_path}. Attempting to download from {face_model_url}...")
+        if not local_face_model_path.is_file():
+            logger.info(f"'{face_model_filename}' not found locally at {local_face_model_path}. Attempting to download from {face_model_url}...")
             try:
                 # Download the file from the URL using requests
-                import requests
+                # import requests # Already imported at the top of the file
                 response = requests.get(face_model_url, stream=True)
                 response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
-                with open(local_model_path, 'wb') as f:
+                with open(local_face_model_path, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
-                logger.info(f"Successfully downloaded '{face_model_filename}' to {local_model_path}")
+                logger.info(f"Successfully downloaded '{face_model_filename}' to {local_face_model_path}")
 
-            except Exception as e_download:
-                logger.warning(f"Could not download '{face_model_filename}' from {face_model_url}: {e_download}")
-                local_model_path = None # Set to None if download fails
+            except Exception as e_download_face: # Renamed e_download to avoid conflict if in same scope later
+                logger.warning(f"Could not download '{face_model_filename}' from {face_model_url}: {e_download_face}")
+                # local_face_model_path remains valid path, but file won't exist if download failed
 
         # Attempt to load the YOLO face model from the local path (if determined and exists)
-        if local_model_path and local_model_path.is_file():
+        if local_face_model_path.is_file(): # Check again if file exists (it might have been downloaded)
             try:
-                logger.info(f"Attempting to load YOLO face model from {local_model_path}...")
+                logger.info(f"Attempting to load YOLO face model from {local_face_model_path}...")
                 # Use str() to ensure compatibility with YOLO() which might expect a string path
-                self.yolo_face_model = YOLO(str(local_model_path))
-                logger.info(f"Successfully loaded YOLO face model from {local_model_path}.")
-            except Exception as e_load:
-                logger.warning(f"Could not load YOLO face model from {local_model_path}: {e_load}")
+                self.yolo_face_model = YOLO(str(local_face_model_path))
+                logger.info(f"Successfully loaded YOLO face model from {local_face_model_path}.")
+            except Exception as e_load_face: # Renamed e_load
+                logger.warning(f"Could not load YOLO face model from {local_face_model_path}: {e_load_face}")
                 self.yolo_face_model = None # Ensure model is None if loading fails
+        else: # File does not exist (either wasn't there initially or download failed)
+            logger.warning(f"YOLO face model file not found at {local_face_model_path}. Face detection with YOLO will be unavailable.")
+            self.yolo_face_model = None
 
 
         # If self.yolo_face_model is still None after attempts, fallback to MediaPipe
