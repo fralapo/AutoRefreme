@@ -2,5 +2,6 @@ opencv-python
 mediapipe
 scenedetect[opencv]
 ultralytics
+huggingface_hub
 tqdm
 numpy
