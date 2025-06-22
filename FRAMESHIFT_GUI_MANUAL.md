@@ -1,113 +1,110 @@
-# Manuale Utente FrameShift GUI
+# FrameShift GUI User Manual
 
-## 1. Introduzione
+## 1. Introduction
 
-Benvenuto a FrameShift GUI! Questa applicazione fornisce un'interfaccia grafica facile da usare per lo strumento FrameShift, che permette di modificare automaticamente il rapporto d'aspetto dei video (ad esempio, da orizzontale a verticale) mantenendo i soggetti importanti nell'inquadratura.
+Welcome to FrameShift GUI! This application provides an easy-to-use graphical interface for the FrameShift tool, which allows you to automatically change the aspect ratio of videos (e.g., from horizontal to vertical) while keeping important subjects in the frame.
 
-Con questa GUI, puoi accedere alle potenti funzionalità di reframing di FrameShift senza dover utilizzare la riga di comando.
+With this GUI, you can access the powerful reframing features of FrameShift without needing to use the command line.
 
-## 2. Requisiti
+## 2. Requirements
 
-**Se esegui da codice sorgente:**
+**If running from source code:**
 
-*   **Python:** Versione 3.8 o successiva.
-*   **Dipendenze di FrameShift:** Tutte le librerie Python elencate nel file `requirements.txt` del progetto FrameShift devono essere installate (es. `opencv-python`, `mediapipe`, `ultralytics`, `scenedetect`, `numpy`, `tqdm`). Puoi installarle con:
+* **Python:** Version 3.8 or later.
+* **FrameShift Dependencies:** All Python libraries listed in the `requirements.txt` file of the FrameShift project must be installed (e.g., `opencv-python`, `mediapipe`, `ultralytics`, `scenedetect`, `numpy`, `tqdm`). You can install them with:
     ```bash
     pip install -r requirements.txt
     ```
-*   **FFmpeg (Fortemente Consigliato):** Per processare e includere l'audio dal video originale nel video reframato.
-    *   Scarica FFmpeg da [ffmpeg.org](https://ffmpeg.org/download.html).
-    *   Installalo e assicurati che la directory contenente l'eseguibile `ffmpeg` (o `ffmpeg.exe`) sia aggiunta al PATH del tuo sistema.
-    *   Se FFmpeg non è trovato, i video verranno processati senza audio e un avviso apparirà nei log.
+* **FFmpeg (Strongly Recommended):** Required to process and include the audio from the original video into the reframed output.
+    * Download FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html).
+    * Install it and ensure the directory containing the `ffmpeg` (or `ffmpeg.exe`) executable is added to your system's PATH.
+    * If FFmpeg is not found, videos will be processed without audio, and a warning will appear in the logs.
 
-**Se utilizzi un eseguibile standalone (se disponibile):**
+**If using a standalone executable (if available):**
 
-*   L'eseguibile dovrebbe includere tutte le dipendenze Python necessarie.
-*   Potrebbe comunque essere necessario installare FFmpeg separatamente e aggiungerlo al PATH del sistema per la gestione dell'audio, a meno che non sia specificato diversamente nella documentazione dell'eseguibile.
+* The executable should include all necessary Python dependencies.
+* You may still need to install FFmpeg separately and add it to your system's PATH for audio handling, unless specified otherwise in the executable's documentation.
 
-## 3. Come Avviare la GUI
+## 3. How to Launch the GUI
 
-**Da codice sorgente:**
+**From source code:**
 
-1.  Assicurati di aver installato tutti i requisiti.
-2.  Naviga nella directory principale del progetto FrameShift tramite un terminale o prompt dei comandi.
-3.  Esegui il seguente comando:
+1.  Ensure you have installed all the requirements.
+2.  Navigate to the main directory of the FrameShift project using a terminal or command prompt.
+3.  Run the following command:
     ```bash
     python frameshift_gui.py
     ```
-    (Se `frameshift_gui.py` si trova in una sottocartella, adatta il percorso, ad esempio `python nome_sottocartella/frameshift_gui.py`).
 
-**Da un eseguibile (se fornito):**
+**From an executable (if provided):**
 
-*   Fai doppio click sul file eseguibile (es. `FrameShiftGUI.exe` su Windows).
+* Simply double-click the executable file (e.g., `FrameShiftGUI.exe` on Windows).
 
-## 4. Descrizione dell'Interfaccia Utente
+## 4. User Interface Description
 
-La GUI è organizzata in diverse sezioni:
+The GUI is organized into several sections:
 
-*   **Input/Output:**
-    *   **Input Video/Cartella:** Campo per visualizzare il percorso del video sorgente o della cartella (per elaborazione batch). Clicca "Sfoglia..." per selezionare.
-    *   **Output Video/Cartella:** Campo per visualizzare il percorso di destinazione del video elaborato o della cartella. Clicca "Sfoglia..." per selezionare.
-    *   **Processa in Batch:** Spunta questa casella per elaborare tutti i video presenti in una cartella di input e salvarli in una cartella di output.
+* **Input & Output:**
+    * **Input Video/Folder:** Displays the path to the source video or folder (for batch processing). Click "Browse..." to select a file or folder. When a single video is loaded, its resolution and aspect ratio are displayed below.
+    * **Output Video/Folder:** Displays the destination path for the processed video or folder. Click "Browse..." to select.
+    * **Batch Process:** Check this box to process all videos in an input folder and save them to an output folder. The labels will change from "Video" to "Folder".
 
-*   **Impostazioni Principali:**
-    *   **Rapporto d'Aspetto:** Il formato desiderato per il video finale (es. `9:16` per video verticali, `1:1` per quadrati, `16:9` per orizzontali).
-    *   **Altezza Output (pixel):** L'altezza del video finale in pixel (es. `1080`, `720`). La larghezza verrà calcolata automaticamente.
-    *   **Interpolazione:** L'algoritmo usato per ridimensionare i fotogrammi. `lanczos` e `cubic` offrono buona qualità, `area` è utile per rimpicciolire, `linear` è più veloce.
+* **Main Settings:**
+    * **Aspect Ratio:** The desired format for the final video (e.g., `9:16` for vertical videos, `1:1` for square, `16:9` for horizontal). You can also select "Custom..." to enter a value manually.
+    * **Output Height (pixels):** A dropdown menu to select the final video's height in pixels (e.g., `1080`, `720`). The options update dynamically based on the chosen Aspect Ratio to suggest standard resolutions. The width will be calculated automatically.
 
-*   **Impostazioni Padding:**
-    *   **Abilita Padding:** Se il video originale, una volta ritagliato, non riempie completamente il nuovo formato, questa opzione permette di aggiungere barre laterali invece di tagliare ulteriormente l'immagine.
-    *   **Tipo di Padding:** (Attivo solo se "Abilita Padding" è spuntato)
-        *   `black`: Aggiunge barre nere.
-        *   `blur`: Aggiunge barre create sfocando i bordi del video originale.
-        *   `color`: Aggiunge barre di un colore solido a tua scelta.
-    *   **Intensità Sfocatura:** (Attivo per padding `blur`) Regola quanto devono essere sfocate le barre (0=minima, 10=massima).
-    *   **Colore Padding:** (Attivo per padding `color`) Inserisci un nome di colore (es. `red`, `green`) o un codice RGB (es. `(255,0,0)`). Puoi anche cliccare "Scegli..." per selezionare un colore da una palette.
+* **Padding Settings:**
+    * **Enable Padding:** If the original video, once cropped, does not completely fill the new format, this option adds sidebars instead of cropping the image further.
+    * **Padding Type:** (Active only if "Enable Padding" is checked)
+        * `black`: Adds black bars. **This is the default.**
+        * `blur`: Adds bars created by blurring the edges of the original video.
+        * `color`: Adds bars of a solid color of your choice.
+    * **Blur Amount:** (Active for `blur` padding) Adjusts how much the bars are blurred (0=minimum, 10=maximum).
+    * **Padding Color:** (Active for `color` padding) Enter a color name (e.g., `red`, `green`) or an RGB code (e.g., `(255,0,0)`). You can also click "Choose..." to select a color from a palette.
 
-*   **Impostazioni Avanzate:**
-    *   **Pesi Oggetti:** Controlla l'importanza data ai diversi tipi di oggetti rilevati (es. volti, persone) nel determinare il ritaglio. Formato: `etichetta1:peso1,etichetta2:peso2`. Pesi più alti danno maggiore priorità. `default` si applica a oggetti non specificati.
-    *   **Opacità Contenuto:** Controlla la trasparenza del video principale. Se inferiore a 1.0, il video viene fuso con uno sfondo sfocato del frame originale. 1.0 è completamente opaco.
+* **Visual Quality:**
+    * **Interpolation:** The algorithm used to resize video frames. `lanczos` and `cubic` offer good quality, `area` is useful for downscaling, and `linear` is faster.
+    * **Content Opacity:** Controls the transparency of the main video. If less than 1.0, the video is blended with a blurred background of the original frame. 1.0 is fully opaque.
 
-*   **Azioni e Stato:**
-    *   **AVVIA PROCESSO:** Bottone per iniziare l'elaborazione video con le impostazioni correnti.
-    *   **Barra di Progresso:** Mostra l'avanzamento dell'elaborazione.
-    *   **Area di Log:** Visualizza messaggi informativi, avvisi ed errori durante il processo.
+* **Object Detection Weights:**
+    * This section allows you to control the importance of different objects when determining the crop.
+    * Use the dropdown menu and "Add" button to add new objects to the list.
+    * Adjust the weight (importance) of each object using the slider (from 0.0 to 1.0). Higher weights give more priority.
+    * `default` applies to any object not specified in the list.
+    * Click the "X" button to remove an object from the list.
 
-*   **Menu "Aiuto":**
-    *   **Informazioni su FrameShift GUI:** Mostra dettagli sulla versione e sullo scopo dell'applicazione.
-    *   **Guida Rapida (Placeholder):** Fornisce i passaggi essenziali per usare la GUI.
+* **Actions & Status:**
+    * **Save detailed log to file:** If checked, prompts you to save a verbose log file of the process.
+    * **START/CANCEL PROCESS:** The main button to start the processing. It changes to a "CANCEL" button while running, allowing you to stop the process (this is most effective between videos in batch mode).
+    * **Progress Bar:** Shows the processing progress.
+    * **Status Label:** Displays real-time progress information for the current file.
+    * **Log Area:** Displays informational messages, warnings, and errors during the process.
 
-## 5. Guida Rapida all'Uso
+## 5. Quick Start Guide
 
-1.  **Avvia FrameShift GUI.**
-2.  **Seleziona Input:** Clicca "Sfoglia..." nella sezione Input e scegli il tuo file video. Se vuoi processare più video, spunta "Processa in Batch" e seleziona una cartella.
-3.  **Seleziona Output:** Clicca "Sfoglia..." nella sezione Output e scegli dove salvare il video processato (o la cartella di output per il batch).
-4.  **Configura Impostazioni:**
-    *   Imposta il "Rapporto d'Aspetto" desiderato (es. `9:16` per TikTok/Instagram Stories).
-    *   Regola l'"Altezza Output" se necessario.
-    *   Se vuoi che il video riempia il frame tagliando i bordi, lascia "Abilita Padding" deselezionato. Se preferisci vedere l'intero contenuto ritagliato con l'aggiunta di barre, spunta "Abilita Padding" e scegli il tipo di padding.
-    *   Esplora le "Impostazioni Avanzate" se hai esigenze specifiche.
-5.  **Controlla i Tooltip:** Passa il mouse sopra le varie opzioni per visualizzare suggerimenti utili.
-6.  **Avvia:** Clicca il bottone "AVVIA PROCESSO".
-7.  **Attendi:** L'elaborazione potrebbe richiedere tempo, specialmente per video lunghi o in modalità batch. Puoi monitorare l'avanzamento nella barra di progresso e leggere i messaggi nell'area di log.
-8.  **Fatto!** Una volta completato, troverai il video reframato nel percorso di output specificato.
+1.  **Launch FrameShift GUI.**
+2.  **Select Input:** Click "Browse..." in the Input section and choose your video file. If you want to process multiple videos, check "Batch Process" and select a folder. The video's resolution and aspect ratio will appear if you select a single file.
+3.  **Select Output:** Click "Browse..." in the Output section and choose where to save the processed video (or the output folder for batch mode).
+4.  **Configure Settings:**
+    * Set the desired **Aspect Ratio** (e.g., `9:16` for TikTok/Instagram Stories).
+    * Select a suitable **Output Height** from the dropdown menu.
+    * If you want the video to fill the frame by cropping the edges, uncheck "Enable Padding". If you prefer to see the entire cropped content with added bars, check "Enable Padding" and choose the padding type.
+    * Fine-tune the **Object Detection Weights** if you have specific subjects to follow.
+5.  **Review Tooltips:** Hover your mouse over the various options to view helpful hints.
+6.  **Start:** Click the **START PROCESS** button.
+7.  **Wait:** Processing may take time, especially for long videos or in batch mode. You can monitor the progress in the progress bar and read messages in the log area.
+8.  **Done!** Once completed, you will find the reframed video at the specified output path.
 
-## 6. Risoluzione Problemi Semplice / FAQ
+## 6. Simple Troubleshooting / FAQ
 
-*   **"FFmpeg non trovato" (Warning nel log):**
-    *   Significa che FFmpeg non è installato o non è nel PATH del tuo sistema. Il video verrà processato senza audio. Per includere l'audio, installa FFmpeg e assicurati che sia accessibile dal terminale.
+* **"FFmpeg not found" (Warning in log):**
+    * This means FFmpeg is not installed or not in your system's PATH. The video will be processed without audio. To include audio, install FFmpeg and ensure it's accessible from the terminal.
 
-*   **Errori di importazione all'avvio (es. "No module named 'ultralytics'"):**
-    *   Questo accade se stai eseguendo la GUI da codice sorgente e le dipendenze di FrameShift non sono installate correttamente. Segui le istruzioni nella sezione "Requisiti" per installarle (solitamente `pip install -r requirements.txt`).
+* **Import errors on startup (e.g., "No module named 'ultralytics'"):**
+    * This happens if you're running the GUI from source code and the FrameShift dependencies are not installed correctly. Follow the instructions in the "Requirements" section to install them (usually `pip install -r requirements.txt`).
 
-*   **L'applicazione sembra bloccata o non risponde:**
-    *   L'elaborazione video, specialmente per file lunghi o con analisi complesse, può richiedere molto tempo. La GUI esegue il lavoro pesante in un thread separato per rimanere il più possibile responsiva, ma operazioni intensive potrebbero comunque dare questa impressione. Controlla l'area di log per messaggi di attività o errori. Se la barra di progresso si muove (o è in modalità indeterminata attiva), probabilmente sta ancora lavorando.
+* **The application seems frozen or unresponsive:**
+    * Video processing, especially for long files or with complex analysis, can be time-consuming. The GUI runs the heavy lifting in a separate thread to remain as responsive as possible, but intensive operations might still give this impression. Check the log area for activity messages or errors. If the progress bar is moving (or active in indeterminate mode), it is likely still working.
 
-*   **Modelli YOLO non trovati / Errori di download:**
-    *   FrameShift usa modelli di intelligenza artificiale (YOLO) per rilevare volti e oggetti. Questi modelli vengono solitamente scaricati automaticamente la prima volta che vengono usati. Assicurati di avere una connessione internet attiva durante il primo avvio o se i modelli non sono presenti. Se ci sono problemi persistenti con i modelli, potrebbero esserci problemi di rete o con la cache dei modelli di `ultralytics`.
-
-*   **Tooltip non chiari o mancanti:**
-    *   I tooltip sono lì per aiutarti! Se un'opzione non è chiara, il tooltip potrebbe fornire il contesto necessario.
-
----
-Speriamo che questa guida ti sia utile per utilizzare FrameShift GUI!
+* **YOLO models not found / Download errors:**
+    * FrameShift uses AI models (YOLO) to detect faces and objects. These models are usually downloaded automatically the first time they are used. Make sure you have an active internet connection on the first run. Persistent issues may indicate network problems or issues with the `ultralytics` model cache.
