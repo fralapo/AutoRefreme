@@ -9,12 +9,17 @@ from collections import deque
 import subprocess # Added for ffmpeg
 import shutil # Added for shutil.which
 import os # Added for os.remove and os.replace
+import logging # Added for logging
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
 
 from .utils.detection import Detector
 from .utils.crop import union_boxes, compute_crop, calculate_weighted_interest_region
 from .weights_parser import parse_object_weights
+
+# Setup module-level logger
+# The main configuration (handlers, levels) is done in main()
+logger = logging.getLogger('frameshift')
 
 # Helper Functions for Padding
 def map_blur_input_to_kernel(intensity: int) -> int:
@@ -49,14 +54,14 @@ def parse_color_to_bgr(color_input: str) -> Tuple[int, int, int]:
                 b = np.clip(int(rgb_str[2].strip()), 0, 255)
                 return (b, g, r) # Return as BGR
             else:
-                print(f"Warning: Invalid RGB tuple format for color '{color_input}'. Expected 3 values (R,G,B).")
+                logger.warning(f"Invalid RGB tuple format for color '{color_input}'. Expected 3 values (R,G,B).")
         except ValueError:
-            print(f"Warning: Could not parse RGB numeric values for color '{color_input}'.")
+            logger.warning(f"Could not parse RGB numeric values for color '{color_input}'.")
         except Exception as e:
-            print(f"Warning: Error parsing RGB color string '{color_input}': {e}")
+            logger.error(f"Error parsing RGB color string '{color_input}': {e}", exc_info=True)
 
-    if color_input != "black": # Avoid double warning if default 'black' fails (should not happen with predefined)
-        print(f"Warning: Color '{color_input}' not recognized or invalid format. Defaulting to black.")
+    if color_input != "black":
+        logger.warning(f"Color '{color_input}' not recognized or invalid format. Defaulting to black.")
     return (0, 0, 0) # Default to black
 
 def get_cv2_interpolation_flag(interpolation_name: str) -> int:
@@ -67,12 +72,12 @@ def get_cv2_interpolation_flag(interpolation_name: str) -> int:
         "linear": cv2.INTER_LINEAR,
         "cubic": cv2.INTER_CUBIC,
         "area": cv2.INTER_AREA,
-        "lanczos": cv2.INTER_LANCZOS4  # Lanczos over 8x8 neighborhood
+        "lanczos": cv2.INTER_LANCZOS4
     }
-    default_flag = cv2.INTER_LANCZOS4 # Default to Lanczos4 if name is unknown
+    default_flag = cv2.INTER_LANCZOS4
     flag = mapping.get(interpolation_name, None)
     if flag is None:
-        print(f"Warning: Unknown interpolation type '{interpolation_name}'. Defaulting to 'lanczos'.")
+        logger.warning(f"Unknown interpolation type '{interpolation_name}'. Defaulting to 'lanczos'.")
         return default_flag
     return flag
 
@@ -107,22 +112,22 @@ def mux_video_audio_with_ffmpeg(
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, encoding='utf-8')
 
         if result.returncode == 0:
-            # print(f"DEBUG: FFmpeg muxing completato con successo per {final_output_path}")
+            # logger.debug(f"FFmpeg muxing completato con successo per {final_output_path}")
             return True
         else:
-            print(f"ERRORE: FFmpeg ha fallito per {final_output_path} (exit code {result.returncode}).")
-            # Limitare la stampa di stdout/stderr se sono molto lunghi
-            print(f"FFmpeg stdout (prime 500 chars):\n{result.stdout[:500]}")
-            print(f"FFmpeg stderr (prime 500 chars):\n{result.stderr[:500]}")
+            logger.error(f"FFmpeg ha fallito per {final_output_path} (exit code {result.returncode}).")
+            logger.error(f"FFmpeg stdout (prime 500 chars):\n{result.stdout[:500]}")
+            logger.error(f"FFmpeg stderr (prime 500 chars):\n{result.stderr[:500]}")
             return False
     except FileNotFoundError:
-        # Questo errore dovrebbe essere già stato catturato dal check iniziale in main()
-        print(f"ERRORE: Eseguibile FFmpeg non trovato a '{ffmpeg_exec_path}'. Impossibile processare l'audio.")
+        logger.error(f"Eseguibile FFmpeg non trovato a '{ffmpeg_exec_path}'. Impossibile processare l'audio.", exc_info=True)
         return False
     except Exception as e:
-        print(f"ERRORE: Eccezione durante l'esecuzione di FFmpeg: {e}")
-        if hasattr(e, 'stdout') and e.stdout: print(f"FFmpeg stdout (eccezione):\n{e.stdout.decode(errors='ignore')[:500]}")
-        if hasattr(e, 'stderr') and e.stderr: print(f"FFmpeg stderr (eccezione):\n{e.stderr.decode(errors='ignore')[:500]}")
+        logger.error(f"Eccezione durante l'esecuzione di FFmpeg per {final_output_path}: {e}", exc_info=True)
+        if hasattr(e, 'stdout') and e.stdout and isinstance(e.stdout, bytes):
+            logger.error(f"FFmpeg stdout (eccezione):\n{e.stdout.decode(errors='ignore')[:500]}")
+        if hasattr(e, 'stderr') and e.stderr and isinstance(e.stderr, bytes):
+            logger.error(f"FFmpeg stderr (eccezione):\n{e.stderr.decode(errors='ignore')[:500]}")
         return False
 
 
@@ -301,11 +306,11 @@ def process_video(
     out = cv2.VideoWriter(str(temp_video_path), fourcc, fps, (out_w, out_h))
 
     if not out.isOpened():
-        print(f"ERROR: Could not open video writer for temporary file: {temp_video_path}")
+        logger.error(f"Could not open video writer for temporary file: {temp_video_path}")
         cap.release()
         return None
 
-    # print(f"DEBUG: Writing temporary video to: {temp_video_path}")
+    # logger.debug(f"Writing temporary video to: {temp_video_path}")
 
     frame_idx = 0
     # prev_box è usato dalla modalità stationary per memorizzare il box fisso della scena.
@@ -417,7 +422,7 @@ def process_video(
                 base_frame_for_padding = np.full((out_h, out_w, 3), color_bgr, dtype=np.uint8)
             else: # Default padding type è 'black' (o se tipo non riconosciuto)
                 if padding_type_str != 'black':
-                     print(f"Warning: Unknown padding_type '{padding_type_str}' with --padding. Defaulting to 'black'.")
+                     logger.warning(f"Unknown padding_type '{padding_type_str}' with --padding. Defaulting to 'black'.")
                 base_frame_for_padding = np.zeros((out_h, out_w, 3), dtype=np.uint8)
 
             final_frame_output = _apply_fit_padding(base_frame_for_padding, cropped_content, out_w, out_h)
@@ -444,14 +449,14 @@ def process_video(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="FrameShift auto reframing tool (stationary mode only).")
+    # Gli argomenti verranno parsati prima, poi si configura il logging.
+    # Questo è un placeholder per l'ordine, la configurazione effettiva avverrà dopo args = parser.parse_args()
 
-    # Check for ffmpeg dependency first
-    ffmpeg_path = shutil.which('ffmpeg')
-    if not ffmpeg_path:
-        print("WARNING: ffmpeg not found in PATH. Audio will not be processed or included in the output video.")
-        print("         Please install FFmpeg and ensure it's in your system's PATH for audio support.")
-    # else:
-        # print(f"DEBUG: Found ffmpeg at: {ffmpeg_path}")
+    # Check for ffmpeg dependency first (verrà spostato dopo il setup del logger per usare logger.warning)
+    # ffmpeg_path = shutil.which('ffmpeg')
+    # if not ffmpeg_path:
+    #     print("WARNING: ffmpeg not found in PATH. Audio will not be processed or included in the output video.")
+    #     print("         Please install FFmpeg and ensure it's in your system's PATH for audio support.")
 
     parser.add_argument("input", help="Input file or directory")
     parser.add_argument("output", help="Output file or directory")
@@ -481,9 +486,42 @@ def main() -> None:
         help="Comma-separated 'label:weight' pairs (e.g., \"face:1.0,person:0.8,default:0.5\"). "
              "Assigns importance weights to detected objects. 'default' for unspecified classes."
     )
+    parser.add_argument("--log_file", type=str, default=None, help="Path to a file where verbose logs will be written. If not specified, logs primarily go to console.")
     parser.add_argument("--batch", action="store_true", help="Process all videos in input directory")
 
     args = parser.parse_args()
+
+    # Configure logging
+    logger = logging.getLogger('frameshift')
+    logger.setLevel(logging.DEBUG)  # Capture all debug messages and above
+
+    # Console handler (always on)
+    console_handler = logging.StreamHandler() # Defaults to sys.stderr
+    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+    console_handler.setFormatter(console_formatter)
+    console_handler.setLevel(logging.INFO) # Only show INFO and above on console
+    logger.addHandler(console_handler)
+
+    if args.log_file:
+        try:
+            file_handler = logging.FileHandler(args.log_file, mode='w', encoding='utf-8')
+            # More detailed formatter for file logs
+            file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(module)s.%(funcName)s:%(lineno)d - %(message)s')
+            file_handler.setFormatter(file_formatter)
+            file_handler.setLevel(logging.DEBUG) # Log everything to file
+            logger.addHandler(file_handler)
+            logger.info(f"Verbose logging enabled to file: {args.log_file}")
+        except Exception as e:
+            logger.error(f"Could not set up file logging to {args.log_file}: {e}", exc_info=True) # Log exception info
+
+    # Now that logger is configured, check for ffmpeg
+    ffmpeg_path = shutil.which('ffmpeg')
+    if not ffmpeg_path:
+        logger.warning("ffmpeg not found in PATH. Audio will not be processed or included in the output video.")
+        logger.warning("Please install FFmpeg and ensure it's in your system's PATH for audio support.")
+    # else:
+    #     logger.debug(f"Found ffmpeg at: {ffmpeg_path}")
+
 
     if args.batch:
         in_dir = Path(args.input)
@@ -518,23 +556,23 @@ def main() -> None:
                             os.remove(temp_video_file)
                             # print(f"DEBUG: Removed temporary video file: {temp_video_file}")
                         except OSError as e:
-                            print(f"Warning: Could not remove temporary video file {temp_video_file}: {e}")
+                            logger.warning(f"Could not remove temporary video file {temp_video_file}: {e}")
                     else:
-                        print(f"Warning: FFmpeg muxing failed for {str(out_path)}. Outputting video without audio.")
+                        logger.warning(f"FFmpeg muxing failed for {str(out_path)}. Outputting video without audio.")
                         try:
-                            # Rinomina il file temporaneo (senza audio) al nome di output finale
-                            shutil.move(temp_video_file, str(out_path)) # shutil.move sovrascrive
-                            print(f"Info: Video (no audio) saved to {str(out_path)}")
+                            shutil.move(temp_video_file, str(out_path))
+                            logger.info(f"Video (no audio) saved to {str(out_path)}")
                         except OSError as e:
-                            print(f"ERRORE: Could not rename temp video {temp_video_file} to {str(out_path)}: {e}")
-                else: # ffmpeg non disponibile
-                    # print(f"DEBUG: FFmpeg not available. Renaming {temp_video_file} to {str(out_path)}")
+                            logger.error(f"Could not rename temp video {temp_video_file} to {str(out_path)}: {e}", exc_info=True)
+                else:
+                    # logger.debug(f"FFmpeg not available. Renaming {temp_video_file} to {str(out_path)}")
                     try:
                         shutil.move(temp_video_file, str(out_path))
+                        # logger.info(f"Video (no audio, FFmpeg not found) saved to {str(out_path)}") # Warning già dato
                     except OSError as e:
-                         print(f"ERRORE: Could not rename temp video {temp_video_file} to {str(out_path)}: {e}")
+                         logger.error(f"Could not rename temp video {temp_video_file} to {str(out_path)}: {e}", exc_info=True)
             else:
-                print(f"ERROR: Video processing failed for {str(vid)}, no temporary file created.")
+                logger.error(f"Video processing failed for {str(vid)}, no temporary file created.")
 
     else: # Single file mode
         parsed_weights = parse_object_weights(args.object_weights)
@@ -559,22 +597,23 @@ def main() -> None:
                         os.remove(temp_video_file)
                         # print(f"DEBUG: Removed temporary video file: {temp_video_file}")
                     except OSError as e:
-                        print(f"Warning: Could not remove temporary video file {temp_video_file}: {e}")
+                            logger.warning(f"Could not remove temporary video file {temp_video_file}: {e}")
                 else:
-                    print(f"Warning: FFmpeg muxing failed for {args.output}. Outputting video without audio.")
+                    logger.warning(f"FFmpeg muxing failed for {args.output}. Outputting video without audio.")
                     try:
                         shutil.move(temp_video_file, args.output)
-                        print(f"Info: Video (no audio) saved to {args.output}")
+                        logger.info(f"Video (no audio) saved to {args.output}")
                     except OSError as e:
-                         print(f"ERRORE: Could not rename temp video {temp_video_file} to {args.output}: {e}")
-            else: # ffmpeg non disponibile
-                # print(f"DEBUG: FFmpeg not available. Renaming {temp_video_file} to {args.output}")
+                         logger.error(f"Could not rename temp video {temp_video_file} to {args.output}: {e}", exc_info=True)
+            else:
+                # logger.debug(f"FFmpeg not available. Renaming {temp_video_file} to {args.output}")
                 try:
                     shutil.move(temp_video_file, args.output)
+                    # logger.info(f"Video (no audio, FFmpeg not found) saved to {args.output}") # Warning già dato
                 except OSError as e:
-                    print(f"ERRORE: Could not rename temp video {temp_video_file} to {args.output}: {e}")
+                    logger.error(f"Could not rename temp video {temp_video_file} to {args.output}: {e}", exc_info=True)
         else:
-            print(f"ERROR: Video processing failed for {args.input}, no temporary file created.")
+            logger.error(f"Video processing failed for {args.input}, no temporary file created.")
 
 
 if __name__ == "__main__":

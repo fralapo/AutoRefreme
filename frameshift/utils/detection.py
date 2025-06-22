@@ -5,6 +5,9 @@ import numpy as np
 import mediapipe as mp
 from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
+import logging
+
+logger = logging.getLogger('frameshift.utils.detection')
 
 
 class Detector:
@@ -23,9 +26,9 @@ class Detector:
         # Load general object detection model (YOLOv8n)
         try:
             self.obj_model = YOLO("yolov8n.pt")
-            # print("INFO: Successfully loaded YOLOv8n for general object detection.")
+            logger.info("Successfully loaded YOLOv8n for general object detection.")
         except Exception as e:
-            print(f"ERROR: Could not load YOLOv8n object model: {e}")
+            logger.error(f"Could not load YOLOv8n object model: {e}", exc_info=True)
             self.obj_model = None
 
         # Attempt to load specialized YOLOv8 face detection model
@@ -33,29 +36,28 @@ class Detector:
         self.mp_face_model = None # Will be initialized if YOLO face model fails
 
         try:
-            # print("INFO: Attempting to download/load YOLOv8-Face-Detection model...")
+            logger.info("Attempting to download/load YOLOv8-Face-Detection model...")
             face_model_path = hf_hub_download(
                 repo_id="arnabdhar/YOLOv8-Face-Detection",
                 filename="model.pt"
             )
             self.yolo_face_model = YOLO(face_model_path)
-            # print("INFO: Successfully loaded YOLOv8-Face-Detection model.")
-            # Check its class names, usually it's {0: 'face'} or similar
+            logger.info("Successfully loaded YOLOv8-Face-Detection model.")
             # if self.yolo_face_model and hasattr(self.yolo_face_model, 'names'):
-                # print(f"DEBUG: YOLOv8 Face Model class names: {self.yolo_face_model.names}")
+                # logger.debug(f"YOLOv8 Face Model class names: {self.yolo_face_model.names}")
         except Exception as e:
-            print(f"WARNING: Could not download/load YOLOv8-Face-Detection model: {e}.")
+            logger.warning(f"Could not download/load YOLOv8-Face-Detection model: {e}. Will use MediaPipe for faces if available.", exc_info=True)
             self.yolo_face_model = None
 
         if self.yolo_face_model is None:
-            print("INFO: Falling back to MediaPipe for face detection.")
+            logger.info("Falling back to MediaPipe for face detection.")
             try:
                 self.mp_face_model = mp.solutions.face_detection.FaceDetection(
                     model_selection=1, min_detection_confidence=self.mp_face_conf
                 )
-                # print("INFO: MediaPipe Face Detection initialized.")
+                logger.info("MediaPipe Face Detection initialized.")
             except Exception as e_mp:
-                print(f"ERROR: Could not initialize MediaPipe Face Detection: {e_mp}")
+                logger.error(f"Could not initialize MediaPipe Face Detection: {e_mp}", exc_info=True)
                 self.mp_face_model = None
 
 
@@ -92,13 +94,13 @@ class Detector:
                             'confidence': confidences[i]
                         })
             except Exception as e_yolo_face:
-                print(f"ERROR: YOLOv8-Face-Detection predict failed: {e_yolo_face}. Attempting MediaPipe fallback if available.")
-                if self.mp_face_model: # Fallback to MediaPipe if YOLO face predict failed
-                    self.yolo_face_model = None # Disable for subsequent frames to avoid repeated errors
-                else: # No MediaPipe fallback either
-                     faces_detected = [] # Ensure it's an empty list
+                logger.error(f"YOLOv8-Face-Detection predict failed: {e_yolo_face}. Attempting MediaPipe fallback if available.", exc_info=True)
+                if self.mp_face_model:
+                    self.yolo_face_model = None
+                else:
+                     faces_detected = []
 
-        if not self.yolo_face_model and self.mp_face_model: # Use MediaPipe if YOLO face model failed init or predict
+        if not self.yolo_face_model and self.mp_face_model:
             try:
                 mp_results = self.mp_face_model.process(rgb_frame)
                 if mp_results.detections:
@@ -114,13 +116,13 @@ class Detector:
                             'confidence': det.score[0] if det.score else self.mp_face_conf
                         })
             except Exception as e_mp_face:
-                 print(f"ERROR: MediaPipe face detection failed: {e_mp_face}")
+                 logger.error(f"MediaPipe face detection failed: {e_mp_face}", exc_info=True)
                  faces_detected = []
 
 
         # 2. Object Detection (Conditional)
         objects_detected: List[Dict[str, Any]] = []
-        if self.obj_model and active_object_labels: # Only run if model loaded and labels are requested
+        if self.obj_model and active_object_labels:
             try:
                 yolo_obj_preds = self.obj_model.predict(frame, imgsz=320, conf=self.yolo_obj_conf, verbose=False)
                 for res in yolo_obj_preds:
@@ -139,7 +141,7 @@ class Detector:
                                 'confidence': confidences[i]
                             })
             except Exception as e_yolo_obj:
-                print(f"ERROR: YOLOv8n object detection predict failed: {e_yolo_obj}")
-                objects_detected = [] # Ensure empty list on error
+                logger.error(f"YOLOv8n object detection predict failed: {e_yolo_obj}", exc_info=True)
+                objects_detected = []
 
         return faces_detected, objects_detected
